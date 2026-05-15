@@ -223,3 +223,9 @@ The inspiration is closer to a XiaoZhi ESP32-style AI voice assistant than a gen
 **Roadmap principle:** No final soldered build until each subsystem works alone.
 
 **Immediate next milestone:** Week 2, display user's own still image on the T-RGB.
+
+**Week 2 implementation start:**
+
+- Added `examples/lv_single_image` as a focused single-image display milestone.
+- Configured PlatformIO to build `examples/lv_single_image` by default.
+- Build verification succeeded with PlatformIO.
