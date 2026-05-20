@@ -229,3 +229,108 @@ The inspiration is closer to a XiaoZhi ESP32-style AI voice assistant than a gen
 - Added `examples/lv_single_image` as a focused single-image display milestone.
 - Configured PlatformIO to build `examples/lv_single_image` by default.
 - Build verification succeeded with PlatformIO.
+
+**Week 2 completion:**
+
+- User successfully displayed the dog/custom picture on the LilyGo T-RGB screen.
+- User confirmed the board can read a JPG from SD card and render it through LVGL.
+- Extended the working example into a slideshow that reads images from `/data/image_5.jpg` through `/data/image_11.jpg` on the SD card.
+- Converted the active example from `.ino` to `main.cpp` so PlatformIO builds it reliably.
+- PlatformIO build verification succeeded after the slideshow update.
+
+**Next milestone started:** Week 3, build a simple bot face with named states using existing `/data` images as placeholder expressions.
+
+**Week 3 implementation start:**
+
+- Updated the active firmware to use named bot face states instead of anonymous slideshow images.
+- Current states use resized 480x480 JPG assets:
+  - `IDLE` -> `/data/main.jpg`
+  - `HAPPY` -> `/data/thumb_up.jpg`
+  - `DISTRACTED` -> `/data/distracting.jpg`
+  - `MAD` -> `/data/mad.jpg`
+  - `TIRED` -> `/data/tired.jpg`
+  - `HUNGARY` -> `/data/hungary.jpg`
+- The firmware cycles states every 3 seconds and displays the state name/caption on screen.
+- PlatformIO build verification succeeded.
+
+**Week 3 completion:**
+
+- User confirmed the state images render correctly after switching from large PNG files to 480x480 JPG files.
+- Simple bot face state milestone is complete.
+
+**Next milestone started:** Week 4, add a text bubble UI so the T-RGB can show a short message cleanly.
+
+**Week 4 implementation start:**
+
+- Added a top state badge for the active bot state.
+- Added a rounded bottom text bubble for the state's short message.
+- Existing face states continue to cycle automatically every 3 seconds.
+- PlatformIO build verification succeeded.
+
+**Week 4 completion:**
+
+- User confirmed the face state UI with text bubble works.
+- Text bubble milestone is complete.
+
+**Next milestone started:** Week 5, connect T-RGB to Wi-Fi and show the connected IP address.
+
+**Week 5 implementation start:**
+
+- Added optional local `wifi_config.h` support for Wi-Fi SSID/password.
+- Added `wifi_config.example.h` template.
+- Added `.gitignore` entry so `wifi_config.h` stays local and private.
+- Firmware shows Wi-Fi status on screen and in Serial Monitor.
+- If Wi-Fi connects, the screen displays the board IP address.
+- PlatformIO build verification succeeded.
+
+**Week 5 completion:**
+
+- User confirmed Wi-Fi connection works.
+- T-RGB displays its connected IP address.
+- Wi-Fi milestone is complete.
+
+**Next milestone started:** Week 6, send text from laptop to T-RGB over Wi-Fi.
+
+**Week 6 implementation start:**
+
+- Added a tiny HTTP server on port 80.
+- Added `GET /` help text endpoint.
+- Added `GET /say?text=...&state=...` endpoint to update the bot text bubble and optional face state.
+- Supported states: `IDLE`, `HAPPY`, `DISTRACTED`, `MAD`, `TIRED`, `HUNGARY`.
+- Remote messages pause automatic face cycling for 15 seconds.
+- PlatformIO build verification succeeded.
+
+**Week 6 completion:**
+
+- User confirmed laptop-to-T-RGB text works.
+- The board can receive text over Wi-Fi and update the on-screen face/message.
+
+**Next milestone started:** Week 7, laptop calls AI and sends the result to T-RGB.
+
+**Week 7 implementation start:**
+
+- Added `tools/ask_bot.py` as the laptop bridge.
+- Initial bridge used OpenAI Responses API; the current bridge now uses DeepSeek after the provider update below.
+- Added `--mock` and `--dry-run` modes for safe local testing.
+- Updated the active milestone README with SD card, Wi-Fi, HTTP, and AI bridge instructions.
+
+**Week 7 provider update:**
+
+- Converted `tools/ask_bot.py` from OpenAI Responses API to DeepSeek Chat Completions API.
+- The script now reads `DEEPSEEK_API_KEY`, defaults to `deepseek-v4-flash`, and supports `DEEPSEEK_MODEL` for switching models.
+
+**Week 7 timeout troubleshooting update:**
+
+- User hit `T-RGB request failed: timed out`, meaning the AI call completed but the laptop could not reach the board HTTP server.
+- Updated `tools/ask_bot.py` to check `BOT_URL/` before calling DeepSeek, print the AI answer before sending to the board, and provide clearer timeout guidance.
+
+**Week 7 display text cleanup update:**
+
+- User saw square boxes for punctuation-like characters on the T-RGB screen.
+- Updated `tools/ask_bot.py` to request plain ASCII from DeepSeek and sanitize outgoing text by converting common Unicode punctuation to ASCII before sending it to `/say`.
+
+**Week 8 implementation start:**
+
+- Updated `tools/ask_bot.py` so DeepSeek returns structured JSON with both `state` and `text`.
+- The script now defaults to `--state AUTO`, allowing the AI to choose one of `IDLE`, `HAPPY`, `DISTRACTED`, `MAD`, `TIRED`, or `HUNGARY`.
+- Users can still force an expression with `--state HAPPY`, `--state MAD`, etc.

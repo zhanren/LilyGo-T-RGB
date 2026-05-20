@@ -40,6 +40,8 @@
 *.su
 *.idb
 *.pdb
+*.pyc
+__pycache__/
 
 # Kernel Module Compile Results
 *.mod*
@@ -54,3 +56,9 @@ dkms.conf
 script
 build
 datas
+.env
+examples/lv_single_image/wifi_config.h
+examples/lv_single_image/wifi_config.example copy.h
+
+#Mac specific
+*.DS_Store

@@ -22,6 +22,8 @@ const char *filename[] = {
     "11.jpg",
 };
 
+const char *image_dir = "/data/image_";
+
 
 void listDir(fs::FS &fs, const char *dirname, uint8_t levels)
 {
@@ -98,12 +100,15 @@ void setup()
     lv_timer_create([](lv_timer_t *t) {
         static int i = 0;
 
-        if (!SD_MMC.exists(String("/image_") + filename[i])) {
-            Serial.println("File not find image..."); return ;
+        String sd_path = String(image_dir) + filename[i];
+
+        if (!SD_MMC.exists(sd_path)) {
+            Serial.print("File not found: ");
+            Serial.println(sd_path);
+            return ;
         }
 
-        // String path = LV_FS_POSIX_LETTER + String(":/image_") + filename[i];
-        String path = lvgl_helper_get_fs_filename(String("/image_") + filename[i]);
+        String path = lvgl_helper_get_fs_filename(sd_path);
 
         Serial.print("open : ");
         Serial.println(path);
@@ -122,7 +127,6 @@ void loop()
     lv_timer_handler();
     delay(2);
 }
-
 
 
 
