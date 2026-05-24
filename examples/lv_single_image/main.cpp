@@ -1,6 +1,6 @@
 /**
  * @file      main.cpp
- * @brief     Week 6 milestone: receive laptop text over Wi-Fi.
+ * @brief     Week 13 milestone: companion personality and memory logging.
  *
  * Copy examples/lv_images/data to the SD card root so the board has:
  * /data/main.jpg, /data/thumb_up.jpg, ...
@@ -26,6 +26,9 @@
 #define FACE_STATE_CHANGE_MS 3000
 #define REMOTE_MESSAGE_HOLD_MS 15000
 #define WIFI_CONNECT_TIMEOUT_MS 15000
+#define SD_MEMORY_DIR "/memory"
+#define SD_WRITE_TEST_PATH "/memory/sd_write_test.txt"
+#define SD_MOMENTS_PATH "/memory/moments.jsonl"
 
 struct FaceState {
     const char *name;
@@ -56,6 +59,15 @@ static lv_obj_t *state_badge_label = NULL;
 static lv_obj_t *wifi_label = NULL;
 static size_t current_state = 0;
 static unsigned long last_remote_message_ms = 0;
+
+// Forward declarations
+bool showFaceState(size_t index);
+void showTextBubble(const char *state_name, const char *message);
+int findFaceStateIndex(const String &state_name);
+bool ensureMemoryDir();
+bool appendSdWriteTest(const char *source, size_t *file_size);
+bool appendMomentLog(const String &line, size_t *file_size);
+String jsonEscape(const String &value);
 
 void createTextBubble()
 {
@@ -154,6 +166,115 @@ void listDir(fs::FS &fs, const char *dirname)
     }
 }
 
+bool ensureMemoryDir()
+{
+    if (SD_MMC.exists(SD_MEMORY_DIR)) {
+        return true;
+    }
+
+    Serial.printf("Creating directory: %s\n", SD_MEMORY_DIR);
+    return SD_MMC.mkdir(SD_MEMORY_DIR);
+}
+
+bool appendSdWriteTest(const char *source, size_t *file_size)
+{
+    if (!ensureMemoryDir()) {
+        Serial.println("Failed to create /memory directory");
+        return false;
+    }
+
+    File file = SD_MMC.open(SD_WRITE_TEST_PATH, FILE_APPEND);
+    if (!file) {
+        Serial.printf("Failed to open %s for append\n", SD_WRITE_TEST_PATH);
+        return false;
+    }
+
+    String line = "ms=" + String(millis());
+    line += ", source=";
+    line += source;
+    line += ", state=";
+    line += face_states[current_state].name;
+    line += "\n";
+
+    size_t written = file.print(line);
+    file.close();
+
+    if (written != line.length()) {
+        Serial.printf("Short write to %s: %u of %u bytes\n", SD_WRITE_TEST_PATH, (unsigned int)written, (unsigned int)line.length());
+        return false;
+    }
+
+    File readback = SD_MMC.open(SD_WRITE_TEST_PATH, FILE_READ);
+    if (!readback) {
+        Serial.printf("Failed to reopen %s for readback\n", SD_WRITE_TEST_PATH);
+        return false;
+    }
+
+    if (file_size) {
+        *file_size = readback.size();
+    }
+    readback.close();
+
+    Serial.printf("SD write OK: %s size=%u\n", SD_WRITE_TEST_PATH, file_size ? (unsigned int)*file_size : 0);
+    return true;
+}
+
+String jsonEscape(const String &value)
+{
+    String escaped = "";
+    for (size_t i = 0; i < value.length(); i++) {
+        char c = value.charAt(i);
+        if (c == '\\' || c == '"') {
+            escaped += '\\';
+            escaped += c;
+        } else if (c == '\n' || c == '\r' || c == '\t') {
+            escaped += ' ';
+        } else if ((uint8_t)c < 32) {
+            escaped += ' ';
+        } else {
+            escaped += c;
+        }
+    }
+    return escaped;
+}
+
+bool appendMomentLog(const String &line, size_t *file_size)
+{
+    if (!ensureMemoryDir()) {
+        Serial.println("Failed to create /memory directory");
+        return false;
+    }
+
+    File file = SD_MMC.open(SD_MOMENTS_PATH, FILE_APPEND);
+    if (!file) {
+        Serial.printf("Failed to open %s for append\n", SD_MOMENTS_PATH);
+        return false;
+    }
+
+    size_t written = file.print(line);
+    written += file.print("\n");
+    file.close();
+
+    if (written != line.length() + 1) {
+        Serial.printf("Short write to %s: %u of %u bytes\n", SD_MOMENTS_PATH, (unsigned int)written, (unsigned int)(line.length() + 1));
+        return false;
+    }
+
+    File readback = SD_MMC.open(SD_MOMENTS_PATH, FILE_READ);
+    if (!readback) {
+        Serial.printf("Failed to reopen %s for readback\n", SD_MOMENTS_PATH);
+        return false;
+    }
+
+    if (file_size) {
+        *file_size = readback.size();
+    }
+    readback.close();
+
+    Serial.printf("Moment log OK: %s size=%u\n", SD_MOMENTS_PATH, file_size ? (unsigned int)*file_size : 0);
+    return true;
+}
+
 bool showFaceState(size_t index)
 {
     const FaceState &state = face_states[index];
@@ -205,10 +326,77 @@ void handleRoot()
         "LilyGo T-RGB bot face is online.\n\n"
         "Try:\n"
         "  http://" + ip + "/say?text=Hello%20from%20my%20laptop\n"
-        "  http://" + ip + "/say?state=HAPPY&text=That%20worked\n\n"
+        "  http://" + ip + "/say?state=HAPPY&text=That%20worked\n"
+        "  http://" + ip + "/sd-write-test\n\n"
+        "  http://" + ip + "/log?event=reply&state=HAPPY&screen_text=Hi\n\n"
         "States: IDLE, HAPPY, DISTRACTED, MAD, TIRED, HUNGARY\n";
 
     server.send(200, "text/plain", body);
+}
+
+void handleSdWriteTest()
+{
+    size_t file_size = 0;
+    bool ok = appendSdWriteTest("http", &file_size);
+
+    if (ok) {
+        showTextBubble("MEMORY", "SD write OK.");
+    } else {
+        showTextBubble("MEMORY", "SD write failed.");
+    }
+    last_remote_message_ms = millis();
+
+    String body = "{";
+    body += "\"ok\":";
+    body += ok ? "true" : "false";
+    body += ",\"path\":\"";
+    body += SD_WRITE_TEST_PATH;
+    body += "\",\"size\":";
+    body += String(file_size);
+    body += "}";
+
+    server.send(ok ? 200 : 500, "application/json", body);
+}
+
+void handleLog()
+{
+    String event = server.arg("event");
+    String source = server.arg("source");
+    String state = server.arg("state");
+    String screen_text = server.arg("screen_text");
+    String speech_text = server.arg("speech_text");
+    String memory = server.arg("memory");
+    String prompt = server.arg("prompt");
+
+    if (event.length() == 0) event = "reply";
+    if (source.length() == 0) source = "laptop";
+    if (state.length() == 0) state = face_states[current_state].name;
+
+    String line = "{";
+    line += "\"ms\":" + String(millis()) + ",";
+    line += "\"event\":\"" + jsonEscape(event) + "\",";
+    line += "\"source\":\"" + jsonEscape(source) + "\",";
+    line += "\"state\":\"" + jsonEscape(state) + "\",";
+    line += "\"face_state\":\"" + String(face_states[current_state].name) + "\",";
+    line += "\"screen_text\":\"" + jsonEscape(screen_text) + "\",";
+    line += "\"speech_text\":\"" + jsonEscape(speech_text) + "\",";
+    line += "\"memory_candidate\":\"" + jsonEscape(memory) + "\",";
+    line += "\"prompt\":\"" + jsonEscape(prompt) + "\"";
+    line += "}";
+
+    size_t file_size = 0;
+    bool ok = appendMomentLog(line, &file_size);
+
+    String body = "{";
+    body += "\"ok\":";
+    body += ok ? "true" : "false";
+    body += ",\"path\":\"";
+    body += SD_MOMENTS_PATH;
+    body += "\",\"size\":";
+    body += String(file_size);
+    body += "}";
+
+    server.send(ok ? 200 : 500, "application/json", body);
 }
 
 void handleSay()
@@ -245,6 +433,8 @@ void startHttpServer()
 {
     server.on("/", HTTP_GET, handleRoot);
     server.on("/say", HTTP_GET, handleSay);
+    server.on("/sd-write-test", HTTP_GET, handleSdWriteTest);
+    server.on("/log", HTTP_GET, handleLog);
     server.begin();
 
     String ip = WiFi.localIP().toString();
@@ -308,6 +498,8 @@ void setup()
 
     listDir(SD_MMC, "/");
     listDir(SD_MMC, "/data");
+    ensureMemoryDir();
+    listDir(SD_MMC, "/memory");
 
     image_view = lv_img_create(lv_scr_act());
     lv_obj_center(image_view);

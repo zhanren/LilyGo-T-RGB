@@ -334,3 +334,120 @@ The inspiration is closer to a XiaoZhi ESP32-style AI voice assistant than a gen
 - Updated `tools/ask_bot.py` so DeepSeek returns structured JSON with both `state` and `text`.
 - The script now defaults to `--state AUTO`, allowing the AI to choose one of `IDLE`, `HAPPY`, `DISTRACTED`, `MAD`, `TIRED`, or `HUNGARY`.
 - Users can still force an expression with `--state HAPPY`, `--state MAD`, etc.
+
+**Week 9 direction update:**
+
+- The T-RGB repo notes that the Grove port is I2C/shared with touch and that T-RGB has no free GPIO, so directly wiring MAX98357A I2S audio to this board is not a good next step.
+- Added laptop-side voice output to `tools/ask_bot.py` with `--speak`, using macOS `say` as a temporary speaker path while the T-RGB continues to show face/text.
+
+**Week 8 completion:**
+
+- User confirmed AI expression auto-selection works.
+- Persona + expression mapping milestone is complete.
+
+---
+
+**Week 9 hardware reality check:**
+
+- Completed full T-RGB GPIO audit. Result: **zero free GPIO pins.**
+- Every GPIO (0-48) is consumed by the 18-pin RGB display bus, SD card, touch controller, I2C expander, backlight, and boot button.
+- The Grove port is I2C-only, shared with the touch controller — cannot be repurposed for I2S or GPIO.
+- README confirms: "T-RGB has no free GPIO and cannot be expanded."
+- **Conclusion:** The T-RGB cannot directly connect the MAX98357A speaker amp, INMP441 microphone, or OV2640 camera.
+
+**Week 9 pivot — Bluetooth TTS (no new hardware):**
+
+- Added `--speak` flag to `tools/ask_bot.py`.
+- Uses macOS built-in `say` command for text-to-speech.
+- Voice defaults to **Samantha** (high-quality en_US voice), configurable via `--voice` or `BOT_VOICE` env var.
+- Audio outputs through whatever audio device macOS is set to — including **Bluetooth speakers/headphones**.
+- Zero new hardware required. The bot now has a voice through the laptop.
+- Usage: `python3 tools/ask_bot.py "are you hungry" --speak`
+
+**Week 9 pivot — Revised project roadmap (no camera/mic hardware):**
+
+Given zero free GPIO on T-RGB and no second ESP32 board, the project pivots to a **T-RGB + Laptop** architecture where:
+
+- **T-RGB** = expressive face (display, touch input, Wi-Fi)
+- **Laptop** = AI brain (DeepSeek) + voice output (macOS `say` → Bluetooth speaker)
+- **Touch** = new input modality (T-RGB has a GT911/CST820/FT3267 touch panel — already initialized)
+
+**Untapped T-RGB capabilities (no extra hardware):**
+
+| Capability | Built In? | Status |
+|---|---|---|
+| 🖼️ Image display | ✅ | Weeks 1-2 complete |
+| 😀 Face states (6 expressions) | ✅ | Weeks 3-4 complete |
+| 📶 Wi-Fi HTTP server | ✅ | Weeks 5-6 complete |
+| 🤖 AI text responses via laptop | ✅ | Weeks 7-8 complete |
+| 🔊 Voice output via laptop TTS | ✅ | Week 9 — just added |
+| 👆 **Touch interaction** | ✅ GT911/CST820/FT3267 | **Not yet used** |
+| 🌡️ **Battery voltage** | ✅ ADC on GPIO4 | Example exists, not in bot |
+| 📊 **Animated transitions** | ✅ LVGL | Not yet built |
+| 🧠 **Conversation memory** | ❌ Laptop-side (Python) | Not yet built |
+| 🌐 **Web dashboard** | ❌ Laptop-side | Not yet built |
+| 📷 Camera input | ❌ Needs ESP32-CAM | Deferred |
+| 🎤 Microphone input | ❌ Needs ESP32 board | Deferred |
+
+**Revised Phase 3 roadmap (Laptop-enhanced bot):**
+
+| Week | Goal | Done When |
+|---|---|---|
+| 9 | Add voice output via laptop TTS | Bot speaks AI replies through Mac/Bluetooth speaker |
+| 10 | Touch interaction | Tapping screen triggers bot responses |
+| 11 | Touch + face interaction | Tap face to change mood, double-tap to ask bot |
+| 12 | Conversation memory | Bot remembers last 5 exchanges |
+| 13 | Animated transitions | Face smoothly crossfades between states |
+| 14 | Web dashboard | Browser page showing bot status, conversation log |
+| 15 | Battery status on face | Low battery warning on screen |
+
+**Audio/camera hardware deferred to future when second ESP32 board is acquired.**
+
+**Immediate next milestone:** Week 10, touch interaction — use the T-RGB's built-in touch panel as input.<｜end▁of▁thinking｜>
+
+**Week 10 implementation start:**
+
+- Updated the active `examples/lv_single_image/main.cpp` firmware to poll the built-in touch panel with `panel.getPoint(&x, &y)`.
+- Single tap cycles to the next face state and briefly pauses automatic cycling.
+- Double tap shows a special happy reaction.
+- Touch coordinates print to Serial Monitor, and a small white dot flashes at the detected touch location.
+- Updated the active README with touch interaction instructions and troubleshooting.
+
+**Week 10 double-tap tuning:**
+
+- User reported double tap did not show the happy reaction.
+- Widened the double-tap window from 500 ms to 800 ms.
+- Changed detection to trigger double-tap on the second touch-down instead of waiting for the second release, which should better match how the T-RGB touch controller reports taps.
+
+**Week 11 implementation start:**
+
+- Added `GET /touch` endpoint to the T-RGB firmware.
+- The endpoint returns the latest touch event as JSON: event id, type, x/y coordinates, and board uptime milliseconds.
+- Single tap records `tap`; double tap records `double_tap`.
+- Added `--watch-touch` mode to `tools/ask_bot.py`.
+- In watch mode, the laptop polls `/touch`; a `double_tap` event triggers a DeepSeek prompt, sends the AI reply back to `/say`, and can speak it with `--speak`.
+
+**Week 11 URL handling fix:**
+
+- User hit `ValueError: unknown url type` when `BOT_URL` was set to `192.168.1.138` without `http://`.
+- Updated `tools/ask_bot.py` so bare IP addresses automatically become `http://IP`.
+- Added friendlier malformed URL errors instead of Python tracebacks.
+
+**Week 11 touch trigger tuning:**
+
+- User reported double-tapping did not appear to trigger anything in watch mode.
+- Changed `--watch-touch` default trigger from double-tap only to `any` touch event.
+- Added `--touch-trigger tap|double_tap|any` so double-tap can still be required later.
+- Watch mode now prints the initial `/touch` state and flushes touch event logs immediately.
+
+**Week 11 immediate touch-down event fix:**
+
+- User confirmed the screen shows a white dot on touch, but Python did not record events.
+- Updated firmware to record a `touch_down` event immediately when the white dot appears.
+- Updated Python `--watch-touch` default trigger to `touch_down`, with `--touch-trigger touch_down|tap|double_tap|any`.
+
+**Week 12 direction change: SD card write proof**
+
+- User asked to dial back touch work for now and follow the newer 2026-05-23 brainstorm around local SD-card memory.
+- Added `/sd-write-test` endpoint to prove the T-RGB can create `/memory`, append to `/memory/sd_write_test.txt`, and read back file size.
+- This becomes the first practical step toward append-only local memory logs.
