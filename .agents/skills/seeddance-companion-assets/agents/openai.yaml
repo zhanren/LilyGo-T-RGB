@@ -1,0 +1,4 @@
+interface:
+  display_name: "SeedDance Companion Assets"
+  short_description: "Generate SeedDance prompts for companion visuals"
+  default_prompt: "Use $seeddance-companion-assets to create SeedDance prompts for the AI companion visual asset set."

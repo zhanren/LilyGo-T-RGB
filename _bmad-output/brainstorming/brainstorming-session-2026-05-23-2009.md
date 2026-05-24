@@ -377,3 +377,15 @@ The strongest throughline is coherence. Every major decision supports the same p
 - Show `MEMORY: SD write OK.` or `MEMORY: SD write failed.` on the T-RGB screen.
 
 **Done when:** Browser request to `http://BOARD_IP/sd-write-test` returns `{"ok":true,...}` and the file exists on the SD card after removing it and checking on the laptop.
+
+**New parallel milestone: SeedDance batch visual asset generation proof**
+
+- Use the ByteDance/Lark batch generation workflow at `https://bytedance.larkoffice.com/wiki/FVTwwm0bGiishxkKOoScdHR2nsg` and/or the Jimeng/Dreamina CLI at `https://jimeng.jianying.com/ai-tool/install` to generate companion visual assets in batches.
+- Prepare a batch asset table from the `seeddance-companion-assets` skill with columns for asset name, type, reference input, prompt, duration/aspect ratio, camera constraints, and acceptance criteria.
+- If using the CLI, install and log in only after explicit approval, then inspect current commands with `dreamina -h` and the relevant subcommand help before generating assets.
+- Start with the locked small dumpling companion reference image so all video loops preserve the same body shape, pixel outline, brown eyes, blush, and non-human roommate personality.
+- Batch generate the first production candidate set: idle loop, listening loop, thinking loop, speaking loop, teasing side-eye loop, sleepy loop, memory-organizing loop, and first activation clip.
+- Reject or regenerate any output with camera drift, character shape changes, complex backgrounds, large body movement, extra accessories, humanization, or loss of pixel/2D style.
+- Store accepted assets with predictable names that map to expression states, such as `idle_loop`, `listening_loop`, `thinking_loop`, `speaking_loop`, `teasing_loop`, `sleepy_loop`, `memory_organizing_loop`, and `first_activation`; keep raw generated outputs separate from converted firmware frame sequences.
+
+**Done when:** At least 6 accepted SeedDance assets are generated from one batch through Lark or the CLI, each keeps a stable centered camera, preserves the same 小面团角色 identity, and can be converted into lightweight frame sequences for the T-RGB expression state manager.

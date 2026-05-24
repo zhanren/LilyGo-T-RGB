@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dreamina CLI"
+  short_description: "Generate images and video with Dreamina CLI"
+  default_prompt: "Use $dreamina-cli to inspect Dreamina CLI help and generate or query an image/video task."

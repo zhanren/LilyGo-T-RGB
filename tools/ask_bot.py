@@ -17,7 +17,24 @@ import urllib.request
 
 DEEPSEEK_CHAT_URL = "https://api.deepseek.com/chat/completions"
 DEFAULT_MODEL = "deepseek-v4-flash"
-VALID_STATES = ("IDLE", "HAPPY", "DISTRACTED", "MAD", "TIRED", "HUNGARY")
+VALID_STATES = (
+    "IDLE",
+    "LISTENING",
+    "THINKING",
+    "SPEAKING",
+    "TEASING",
+    "ANNOYED",
+    "PROUD",
+    "SLEEPY",
+    "MEMORY",
+    "UNCERTAIN",
+    # Legacy image-demo states still accepted by the firmware.
+    "HAPPY",
+    "DISTRACTED",
+    "MAD",
+    "TIRED",
+    "HUNGARY",
+)
 DEFAULT_PERSONA = (
     "You are the personality inside a tiny round-screen desk bot. "
     "Answer with warm, playful presence and short lines. "
@@ -63,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--state",
         default="AUTO",
-        help="Face state to show. Use AUTO to let DeepSeek choose, or IDLE/HAPPY/DISTRACTED/MAD/TIRED/HUNGARY.",
+        help="Face state to show. Use AUTO to let DeepSeek choose, or pass any firmware state such as SPEAKING/TEASING/MEMORY.",
     )
     parser.add_argument(
         "--model",
@@ -156,6 +173,13 @@ def extract_chat_text(response_json: dict) -> str:
 
 def build_system_prompt(max_chars: int) -> str:
     persona = os.environ.get("BOT_PERSONA", DEFAULT_PERSONA)
+    state_guidance = (
+        "IDLE=quiet presence, LISTENING=the user is speaking, THINKING=brief processing pause, "
+        "SPEAKING=normal reply, TEASING=gentle side-eye humor, ANNOYED=playful protest, "
+        "PROUD=satisfied little victory, SLEEPY=low-energy warmth, MEMORY=sorting or preserving a moment, "
+        "UNCERTAIN=honest not-sure-yet. Legacy states HAPPY, DISTRACTED, MAD, TIRED, HUNGARY are allowed "
+        "only when they fit better than the newer companion states."
+    )
     return (
         f"{persona}\n\n"
         "Identity: you are a small memory-seed companion living in a round desk screen. "
@@ -168,6 +192,7 @@ def build_system_prompt(max_chars: int) -> str:
         "Return json only. No markdown. No extra text.\n"
         "Choose exactly one state from this list: "
         f"{', '.join(VALID_STATES)}.\n"
+        f"State meanings: {state_guidance}\n"
         f"screen_text must be plain ASCII only and under {max_chars} characters for the T-RGB display. "
         "Use screen_text for a short visible caption, not a full answer.\n"
         "speech_text should be a short Chinese-first spoken line. English is allowed for names or technical terms. "
@@ -354,7 +379,7 @@ def speak_text(text: str, voice: str) -> str:
 def run_reply_flow(args: argparse.Namespace, prompt: str, bot_url: str, source: str = "laptop") -> None:
     if args.mock:
         reply = BotReply(
-            state=normalize_state(args.state if args.state != "AUTO" else "HAPPY"),
+            state=normalize_state(args.state if args.state != "AUTO" else "SPEAKING"),
             screen_text=trim_for_screen(f"I heard you ask: {prompt}", args.max_chars),
             speech_text=trim_text(f"我听到了。你刚才说: {prompt}", 180),
             memory_candidate="",
