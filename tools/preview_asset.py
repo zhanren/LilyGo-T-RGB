@@ -43,6 +43,11 @@ def parse_args() -> argparse.Namespace:
         help="Bubble text to show while previewing. Defaults to the asset path.",
     )
     parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Hide the badge, Wi-Fi label, and text bubble for a faster bare asset preview.",
+    )
+    parser.add_argument(
         "--timeout",
         type=int,
         default=20,
@@ -70,6 +75,7 @@ def main() -> int:
             "folder": folder,
             "state": args.state,
             "text": args.text,
+            "chrome": "0" if args.clean else "1",
         }
     )
     url = f"{bot_url}/preview?{query}"

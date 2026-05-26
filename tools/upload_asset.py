@@ -7,7 +7,10 @@ import argparse
 import json
 import mimetypes
 from pathlib import Path
+import shutil
+import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -15,6 +18,8 @@ import uuid
 
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".mp4"}
+RESIZABLE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+DEFAULT_RESIZE_MAX = 480
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,6 +50,17 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Print what would be uploaded without contacting the T-RGB.",
+    )
+    parser.add_argument(
+        "--resize-max",
+        type=int,
+        default=DEFAULT_RESIZE_MAX,
+        help="Resize JPG/PNG stills to this max width/height before upload. Defaults to 480.",
+    )
+    parser.add_argument(
+        "--no-resize",
+        action="store_true",
+        help="Upload JPG/PNG stills exactly as-is.",
     )
     parser.add_argument(
         "--timeout",
@@ -103,6 +119,33 @@ def encode_multipart_file(field_name: str, path: Path, upload_name: str) -> tupl
     return b"".join(chunks), boundary
 
 
+def should_resize(path: Path, upload_name: str, resize_max: int, no_resize: bool) -> bool:
+    if no_resize or resize_max <= 0:
+        return False
+    suffix = Path(upload_name).suffix.lower() or path.suffix.lower()
+    return suffix in RESIZABLE_EXTENSIONS
+
+
+def resize_for_display(path: Path, upload_name: str, resize_max: int, temp_dir: Path) -> tuple[Path, str]:
+    sips = shutil.which("sips")
+    if not sips:
+        raise RuntimeError("Cannot resize JPG/PNG assets because 'sips' was not found. Use --no-resize to upload as-is.")
+
+    resized_path = temp_dir / upload_name
+    resized_path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [sips, "-Z", str(resize_max), str(path), "--out", str(resized_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    original_size = path.stat().st_size
+    resized_size = resized_path.stat().st_size
+    note = f"resized <= {resize_max}px, {original_size} -> {resized_size} bytes"
+    return resized_path, note
+
+
 def request_json(url: str, timeout: int, data: bytes | None = None, headers: dict[str, str] | None = None) -> dict:
     request = urllib.request.Request(url, data=data, headers=headers or {})
     try:
@@ -120,12 +163,21 @@ def request_json(url: str, timeout: int, data: bytes | None = None, headers: dic
         raise RuntimeError(f"T-RGB did not return JSON:\n{body}") from exc
 
 
-def upload_file(bot_url: str, folder: str, path: Path, upload_name: str, timeout: int, dry_run: bool) -> None:
+def upload_file(
+    bot_url: str,
+    folder: str,
+    path: Path,
+    upload_name: str,
+    timeout: int,
+    dry_run: bool,
+    note: str = "",
+) -> None:
     query = urllib.parse.urlencode({"folder": folder})
     url = f"{bot_url}/upload?{query}"
 
     if dry_run:
-        print(f"DRY RUN upload {path} -> {url} as {upload_name}")
+        suffix = f" ({note})" if note else ""
+        print(f"DRY RUN upload {path} -> {url} as {upload_name}{suffix}")
         return
 
     body, boundary = encode_multipart_file("file", path, upload_name)
@@ -134,7 +186,8 @@ def upload_file(bot_url: str, folder: str, path: Path, upload_name: str, timeout
     if not result.get("ok"):
         raise RuntimeError(f"Upload failed for {path.name}: {result}")
 
-    print(f"Uploaded {path.name} -> {result.get('path')} ({result.get('size')} bytes)")
+    suffix = f" ({note})" if note else ""
+    print(f"Uploaded {path.name} as {upload_name} -> {result.get('path')} ({result.get('size')} bytes){suffix}")
 
 
 def list_assets(bot_url: str, folder: str, timeout: int, dry_run: bool) -> None:
@@ -166,11 +219,19 @@ def main() -> int:
     folder = validate_folder(args.folder)
     paths = [validate_file(file_text) for file_text in args.files]
 
-    for path in paths:
-        upload_name = args.name or path.name
-        if Path(upload_name).suffix.lower() not in ALLOWED_EXTENSIONS:
-            raise RuntimeError(f"Upload name must end with JPG, PNG, GIF, or MP4: {upload_name}")
-        upload_file(bot_url, folder, path, upload_name, args.timeout, args.dry_run)
+    with tempfile.TemporaryDirectory(prefix="trgb-upload-") as temp_dir_text:
+        temp_dir = Path(temp_dir_text)
+        for path in paths:
+            upload_name = args.name or path.name
+            if Path(upload_name).suffix.lower() not in ALLOWED_EXTENSIONS:
+                raise RuntimeError(f"Upload name must end with JPG, PNG, GIF, or MP4: {upload_name}")
+
+            upload_path = path
+            note = ""
+            if should_resize(path, upload_name, args.resize_max, args.no_resize):
+                upload_path, note = resize_for_display(path, upload_name, args.resize_max, temp_dir)
+
+            upload_file(bot_url, folder, upload_path, upload_name, args.timeout, args.dry_run, note)
 
     if args.list:
         list_assets(bot_url, folder, args.timeout, args.dry_run)

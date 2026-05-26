@@ -13,6 +13,10 @@
 #include <WiFi.h>
 #include <ctype.h>
 
+extern "C" {
+#include "gif_fast.h"
+}
+
 #if __has_include("wifi_config.h")
 #include "wifi_config.h"
 #else
@@ -30,6 +34,7 @@
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 #define SD_MEMORY_DIR "/memory"
 #define SD_UPLOAD_DEFAULT_DIR "/data"
+#define SD_FACE_BINDINGS_PATH "/memory/face_bindings.csv"
 #define SD_WRITE_TEST_PATH "/memory/sd_write_test.txt"
 #define SD_MOMENTS_PATH "/memory/moments.jsonl"
 
@@ -63,6 +68,7 @@ const FaceState face_states[] = {
 const size_t face_state_count = sizeof(face_states) / sizeof(face_states[0]);
 const size_t ambient_sequence[] = {0, 7, 0, 4, 0, 6, 0, 2, 0, 9};
 const size_t ambient_sequence_count = sizeof(ambient_sequence) / sizeof(ambient_sequence[0]);
+static String face_state_image_paths[face_state_count];
 
 LilyGo_RGBPanel panel;
 WebServer server(80);
@@ -71,6 +77,11 @@ static lv_obj_t *status_label = NULL;
 static lv_obj_t *bubble = NULL;
 static lv_obj_t *bubble_label = NULL;
 static lv_obj_t *image_view = NULL;
+static String current_visual_lvgl_path = "";
+static bool visual_asset_is_gif = false;
+static gif_fast_t gif_player;
+static bool gif_player_loaded = false;
+static bool chrome_visible = true;
 static lv_obj_t *state_badge = NULL;
 static lv_obj_t *state_badge_label = NULL;
 static lv_obj_t *wifi_label = NULL;
@@ -99,8 +110,17 @@ String sanitizeAssetFilename(const String &filename);
 bool ensureSdDir(const String &dir);
 bool isAllowedAssetFilename(const String &filename);
 bool isDisplayableAssetFilename(const String &filename);
+bool isGifAssetFilename(const String &filename);
 String sanitizeAssetPath(const String &path, const String &default_folder);
-bool showAssetPath(const String &path, const char *state_name, const char *message);
+bool showAssetPath(const String &path, const char *state_name, const char *message, bool show_chrome = true);
+void showVisualAsset(const String &path);
+void setChromeVisible(bool visible);
+void initFaceStateBindings();
+bool loadFaceStateBindings();
+bool saveFaceStateBindings();
+String getFaceStateImagePath(size_t index);
+bool bindFaceStateAsset(const String &state_name, const String &path, String *error);
+void resetFaceStateBinding(size_t index);
 
 void createTextBubble()
 {
@@ -151,8 +171,27 @@ void createWifiLabel()
     lv_label_set_text(wifi_label, "Wi-Fi: not started");
 }
 
+void setChromeVisible(bool visible)
+{
+    chrome_visible = visible;
+    lv_obj_t *objects[] = {state_badge, wifi_label, bubble};
+    const size_t object_count = sizeof(objects) / sizeof(objects[0]);
+
+    for (size_t i = 0; i < object_count; i++) {
+        if (!objects[i]) {
+            continue;
+        }
+        if (visible) {
+            lv_obj_clear_flag(objects[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(objects[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
 void showTextBubble(const char *state_name, const char *message)
 {
+    setChromeVisible(true);
     lv_label_set_text(state_badge_label, state_name);
     lv_label_set_text(bubble_label, message);
     lv_obj_align(bubble, LV_ALIGN_BOTTOM_MID, 0, -24);
@@ -180,6 +219,7 @@ void showStatus(const char *message)
     }
 
     lv_label_set_text(status_label, message);
+    lv_obj_clear_flag(status_label, LV_OBJ_FLAG_HIDDEN);
     Serial.println(message);
 }
 
@@ -297,6 +337,13 @@ bool isDisplayableAssetFilename(const String &filename)
     return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".gif");
 }
 
+bool isGifAssetFilename(const String &filename)
+{
+    String lower = filename;
+    lower.toLowerCase();
+    return lower.endsWith(".gif");
+}
+
 String sanitizeAssetPath(const String &path, const String &default_folder)
 {
     String clean = path;
@@ -328,6 +375,121 @@ String sanitizeAssetPath(const String &path, const String &default_folder)
     }
 
     return folder + "/" + filename;
+}
+
+void initFaceStateBindings()
+{
+    for (size_t i = 0; i < face_state_count; i++) {
+        face_state_image_paths[i] = face_states[i].image_path;
+    }
+    loadFaceStateBindings();
+}
+
+String getFaceStateImagePath(size_t index)
+{
+    if (index >= face_state_count || face_state_image_paths[index].length() == 0) {
+        return "";
+    }
+    return face_state_image_paths[index];
+}
+
+bool loadFaceStateBindings()
+{
+    if (!SD_MMC.exists(SD_FACE_BINDINGS_PATH)) {
+        return true;
+    }
+
+    File file = SD_MMC.open(SD_FACE_BINDINGS_PATH, FILE_READ);
+    if (!file) {
+        Serial.printf("Failed to open %s\n", SD_FACE_BINDINGS_PATH);
+        return false;
+    }
+
+    while (file.available()) {
+        String line = file.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0 || line.startsWith("#")) {
+            continue;
+        }
+
+        int comma = line.indexOf(',');
+        if (comma <= 0) {
+            continue;
+        }
+
+        String state_name = line.substring(0, comma);
+        String path = sanitizeAssetPath(line.substring(comma + 1), SD_UPLOAD_DEFAULT_DIR);
+        int state_index = findFaceStateIndex(state_name);
+        if (state_index >= 0 && path.length() > 0 && isDisplayableAssetFilename(path) && SD_MMC.exists(path.c_str())) {
+            face_state_image_paths[(size_t)state_index] = path;
+            Serial.printf("Loaded face binding: %s -> %s\n", face_states[state_index].name, path.c_str());
+        }
+    }
+
+    file.close();
+    return true;
+}
+
+bool saveFaceStateBindings()
+{
+    if (!ensureMemoryDir()) {
+        return false;
+    }
+
+    File file = SD_MMC.open(SD_FACE_BINDINGS_PATH, FILE_WRITE);
+    if (!file) {
+        Serial.printf("Failed to open %s for write\n", SD_FACE_BINDINGS_PATH);
+        return false;
+    }
+
+    file.println("# state,path");
+    for (size_t i = 0; i < face_state_count; i++) {
+        file.print(face_states[i].name);
+        file.print(",");
+        file.println(getFaceStateImagePath(i));
+    }
+    file.close();
+    return true;
+}
+
+bool bindFaceStateAsset(const String &state_name, const String &path, String *error)
+{
+    int state_index = findFaceStateIndex(state_name);
+    if (state_index < 0) {
+        if (error) *error = "unknown state";
+        return false;
+    }
+
+    String clean_path = sanitizeAssetPath(path, SD_UPLOAD_DEFAULT_DIR);
+    if (clean_path.length() == 0) {
+        if (error) *error = "invalid asset path";
+        return false;
+    }
+
+    if (!isDisplayableAssetFilename(clean_path)) {
+        if (error) *error = "state assets must be jpg, png, or gif";
+        return false;
+    }
+
+    if (!SD_MMC.exists(clean_path.c_str())) {
+        if (error) *error = "asset file not found";
+        return false;
+    }
+
+    face_state_image_paths[(size_t)state_index] = clean_path;
+    if (!saveFaceStateBindings()) {
+        if (error) *error = "could not save binding";
+        return false;
+    }
+
+    return true;
+}
+
+void resetFaceStateBinding(size_t index)
+{
+    if (index < face_state_count) {
+        face_state_image_paths[index] = face_states[index].image_path;
+    }
 }
 
 bool appendSdWriteTest(const char *source, size_t *file_size)
@@ -429,10 +591,56 @@ bool appendMomentLog(const String &line, size_t *file_size)
     return true;
 }
 
+void showVisualAsset(const String &path)
+{
+    /* Clear any previous error status label */
+    if (status_label) {
+        lv_obj_add_flag(status_label, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    current_visual_lvgl_path = lvgl_helper_get_fs_filename(path.c_str());
+    visual_asset_is_gif = isGifAssetFilename(path);
+
+    if (visual_asset_is_gif) {
+        /* Free any previously loaded GIF player */
+        if (gif_player_loaded) {
+            gif_fast_free(&gif_player);
+            gif_player_loaded = false;
+        }
+
+        Serial.print("Pre-decoding gif: ");
+        Serial.println(current_visual_lvgl_path);
+
+        if (gif_fast_load(&gif_player, current_visual_lvgl_path.c_str())) {
+            gif_player_loaded = true;
+            gif_fast_play(&gif_player, image_view);
+            Serial.printf("  -> %u frames, %ux%u\n",
+                          gif_player.count, gif_player.width, gif_player.height);
+        } else {
+            Serial.println("  -> gif_fast_load failed!");
+            visual_asset_is_gif = false;
+        }
+        return;
+    }
+
+    /* Static image: stop any running GIF */
+    if (gif_player_loaded) {
+        gif_fast_free(&gif_player);
+        gif_player_loaded = false;
+    }
+
+    Serial.print("Opening image: ");
+    Serial.println(current_visual_lvgl_path);
+    lv_obj_clear_flag(image_view, LV_OBJ_FLAG_HIDDEN);
+    lv_img_set_src(image_view, current_visual_lvgl_path.c_str());
+    lv_obj_center(image_view);
+}
+
 bool showFaceState(size_t index)
 {
     const FaceState &state = face_states[index];
-    const char *sd_path = state.image_path;
+    String image_path = getFaceStateImagePath(index);
+    const char *sd_path = image_path.c_str();
 
     if (!SD_MMC.exists(sd_path)) {
         Serial.print("Missing image: ");
@@ -441,19 +649,13 @@ bool showFaceState(size_t index)
         return false;
     }
 
-    String lvgl_path = lvgl_helper_get_fs_filename(sd_path);
-    Serial.print("Opening image: ");
-    Serial.println(lvgl_path);
-
-    lv_img_set_src(image_view, lvgl_path.c_str());
-    lv_obj_center(image_view);
-
+    showVisualAsset(image_path);
     showTextBubble(state.name, state.caption);
     last_state_change_ms = millis();
     return true;
 }
 
-bool showAssetPath(const String &path, const char *state_name, const char *message)
+bool showAssetPath(const String &path, const char *state_name, const char *message, bool show_chrome)
 {
     if (!SD_MMC.exists(path.c_str())) {
         Serial.print("Missing preview asset: ");
@@ -462,13 +664,11 @@ bool showAssetPath(const String &path, const char *state_name, const char *messa
         return false;
     }
 
-    String lvgl_path = lvgl_helper_get_fs_filename(path.c_str());
-    Serial.print("Previewing asset: ");
-    Serial.println(lvgl_path);
-
-    lv_img_set_src(image_view, lvgl_path.c_str());
-    lv_obj_center(image_view);
-    showTextBubble(state_name, message);
+    setChromeVisible(show_chrome);
+    showVisualAsset(path);
+    if (show_chrome) {
+        showTextBubble(state_name, message);
+    }
     last_state_change_ms = millis();
     return true;
 }
@@ -513,6 +713,10 @@ void nextAmbientState(lv_timer_t *)
 
 void updateMicroAnimation(lv_timer_t *)
 {
+    if (visual_asset_is_gif || !chrome_visible) {
+        return;
+    }
+
     static const int8_t bubble_offsets[] = {0, -1, -2, -1, 0, 1};
     static const uint8_t badge_opacity[] = {70, 72, 76, 72, 70, 68};
     const size_t frame_count = sizeof(bubble_offsets) / sizeof(bubble_offsets[0]);
@@ -541,6 +745,7 @@ void handleRoot()
         "  http://" + ip + "/personality\n\n"
         "  http://" + ip + "/assets?folder=/data\n\n"
         "  http://" + ip + "/preview?file=memory.png&text=Memory%20test\n\n"
+        "  http://" + ip + "/bind?state=PROUD&file=pround.png\n\n"
         "States: " + getStateList() + "\n";
 
     server.send(200, "text/plain", body);
@@ -571,12 +776,90 @@ void handlePersonality()
         body += "\",\"caption\":\"";
         body += jsonEscape(face_states[i].caption);
         body += "\",\"asset\":\"";
+        body += jsonEscape(getFaceStateImagePath(i));
+        body += "\",\"default_asset\":\"";
         body += face_states[i].image_path;
         body += "\"}";
     }
     body += "]}";
 
     server.send(200, "application/json", body);
+}
+
+void handleListBindings()
+{
+    String body = "{\"ok\":true,\"path\":\"";
+    body += SD_FACE_BINDINGS_PATH;
+    body += "\",\"bindings\":[";
+
+    for (size_t i = 0; i < face_state_count; i++) {
+        if (i > 0) {
+            body += ",";
+        }
+        body += "{\"state\":\"";
+        body += face_states[i].name;
+        body += "\",\"asset\":\"";
+        body += jsonEscape(getFaceStateImagePath(i));
+        body += "\",\"default_asset\":\"";
+        body += face_states[i].image_path;
+        body += "\"}";
+    }
+    body += "]}";
+
+    server.send(200, "application/json", body);
+}
+
+void handleBindAsset()
+{
+    String state_name = server.arg("state");
+    String reset = server.arg("reset");
+    int state_index = findFaceStateIndex(state_name);
+
+    if (state_index < 0) {
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"unknown state\"}");
+        return;
+    }
+
+    String error = "";
+    if (reset == "1" || reset.equalsIgnoreCase("true")) {
+        resetFaceStateBinding((size_t)state_index);
+        if (!saveFaceStateBindings()) {
+            server.send(500, "application/json", "{\"ok\":false,\"error\":\"could not save binding\"}");
+            return;
+        }
+    } else {
+        String file = server.arg("file");
+        if (file.length() == 0) {
+            file = server.arg("path");
+        }
+
+        String folder = server.arg("folder");
+        if (folder.length() == 0) {
+            folder = SD_UPLOAD_DEFAULT_DIR;
+        }
+
+        String path = sanitizeAssetPath(file, folder);
+        if (!bindFaceStateAsset(state_name, path, &error)) {
+            String body = "{\"ok\":false,\"error\":\"";
+            body += jsonEscape(error);
+            body += "\"}";
+            server.send(400, "application/json", body);
+            return;
+        }
+    }
+
+    current_state = (size_t)state_index;
+    bool shown = showFaceState(current_state);
+    last_remote_message_ms = millis();
+
+    String body = "{\"ok\":";
+    body += shown ? "true" : "false";
+    body += ",\"state\":\"";
+    body += face_states[current_state].name;
+    body += "\",\"asset\":\"";
+    body += jsonEscape(getFaceStateImagePath(current_state));
+    body += "\"}";
+    server.send(shown ? 200 : 500, "application/json", body);
 }
 
 void handleListAssets()
@@ -651,7 +934,11 @@ void handlePreviewAsset()
         text = path;
     }
 
-    bool ok = showAssetPath(path, state_name.c_str(), text.c_str());
+    String chrome = server.arg("chrome");
+    chrome.toLowerCase();
+    bool show_chrome = !(chrome == "0" || chrome == "false" || chrome == "off" || chrome == "no");
+
+    bool ok = showAssetPath(path, state_name.c_str(), text.c_str(), show_chrome);
     last_remote_message_ms = millis();
 
     String body = "{";
@@ -659,7 +946,9 @@ void handlePreviewAsset()
     body += ok ? "true" : "false";
     body += ",\"path\":\"";
     body += jsonEscape(path);
-    body += "\"}";
+    body += "\",\"chrome\":";
+    body += show_chrome ? "true" : "false";
+    body += "}";
 
     server.send(ok ? 200 : 404, "application/json", body);
 }
@@ -856,6 +1145,8 @@ void startHttpServer()
     server.on("/personality", HTTP_GET, handlePersonality);
     server.on("/assets", HTTP_GET, handleListAssets);
     server.on("/preview", HTTP_GET, handlePreviewAsset);
+    server.on("/bindings", HTTP_GET, handleListBindings);
+    server.on("/bind", HTTP_GET, handleBindAsset);
     server.on("/upload", HTTP_POST, handleAssetUploadComplete, handleAssetUpload);
     server.begin();
 
@@ -921,6 +1212,7 @@ void setup()
     listDir(SD_MMC, "/");
     listDir(SD_MMC, "/data");
     ensureMemoryDir();
+    initFaceStateBindings();
     listDir(SD_MMC, "/memory");
 
     image_view = lv_img_create(lv_scr_act());
@@ -940,7 +1232,7 @@ void setup()
 
 void loop()
 {
-    server.handleClient();
     lv_timer_handler();
-    delay(2);
+    server.handleClient();
+    delay(1);
 }
