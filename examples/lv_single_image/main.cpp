@@ -13,10 +13,6 @@
 #include <WiFi.h>
 #include <ctype.h>
 
-extern "C" {
-#include "gif_fast.h"
-}
-
 #if __has_include("wifi_config.h")
 #include "wifi_config.h"
 #else
@@ -77,10 +73,11 @@ static lv_obj_t *status_label = NULL;
 static lv_obj_t *bubble = NULL;
 static lv_obj_t *bubble_label = NULL;
 static lv_obj_t *image_view = NULL;
+static lv_obj_t *gif_view = NULL;
+static uint8_t *gif_ram_buf = NULL;    /* GIF loaded into PSRAM for fast decode */
+static lv_img_dsc_t gif_ram_dsc;       /* descriptor pointing to RAM buffer */
 static String current_visual_lvgl_path = "";
 static bool visual_asset_is_gif = false;
-static gif_fast_t gif_player;
-static bool gif_player_loaded = false;
 static bool chrome_visible = true;
 static lv_obj_t *state_badge = NULL;
 static lv_obj_t *state_badge_label = NULL;
@@ -327,7 +324,7 @@ bool isAllowedAssetFilename(const String &filename)
 {
     String lower = filename;
     lower.toLowerCase();
-    return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".gif") || lower.endsWith(".mp4");
+    return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".gif");
 }
 
 bool isDisplayableAssetFilename(const String &filename)
@@ -602,36 +599,53 @@ void showVisualAsset(const String &path)
     visual_asset_is_gif = isGifAssetFilename(path);
 
     if (visual_asset_is_gif) {
-        /* Free any previously loaded GIF player */
-        if (gif_player_loaded) {
-            gif_fast_free(&gif_player);
-            gif_player_loaded = false;
+        if (!gif_view) {
+            gif_view = lv_gif_create(lv_scr_act());
         }
 
-        Serial.print("Pre-decoding gif: ");
-        Serial.println(current_visual_lvgl_path);
+        /* Free previous RAM buffer */
+        if (gif_ram_buf) { free(gif_ram_buf); gif_ram_buf = NULL; }
 
-        if (gif_fast_load(&gif_player, current_visual_lvgl_path.c_str())) {
-            gif_player_loaded = true;
-            gif_fast_play(&gif_player, image_view);
-            Serial.printf("  -> %u frames, %ux%u\n",
-                          gif_player.count, gif_player.width, gif_player.height);
-        } else {
-            Serial.println("  -> gif_fast_load failed!");
-            visual_asset_is_gif = false;
+        /* Pre-load entire GIF into PSRAM to eliminate SD reads during playback. */
+        File f = SD_MMC.open(path.c_str());
+        if (f) {
+            size_t sz = f.size();
+            if (sz > 0 && sz < 1024 * 1024) {  /* up to 1MB */
+                gif_ram_buf = (uint8_t *)ps_malloc(sz);
+                if (gif_ram_buf) {
+                    f.read(gif_ram_buf, sz);
+                    gif_ram_dsc.data = gif_ram_buf;
+                    gif_ram_dsc.data_size = sz;
+                    gif_ram_dsc.header.always_zero = 0;
+                    gif_ram_dsc.header.cf = LV_IMG_CF_RAW;
+                    f.close();
+
+                    lv_obj_add_flag(image_view, LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_clear_flag(gif_view, LV_OBJ_FLAG_HIDDEN);
+                    lv_gif_set_src(gif_view, &gif_ram_dsc);  /* from RAM! */
+                    lv_obj_center(gif_view);
+                    lv_img_set_zoom(gif_view, 960);
+                    return;
+                }
+            }
+            f.close();
         }
+
+        /* Fallback: load from SD (slower) */
+        lv_obj_add_flag(image_view, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(gif_view, LV_OBJ_FLAG_HIDDEN);
+        lv_gif_set_src(gif_view, current_visual_lvgl_path.c_str());
+        lv_obj_center(gif_view);
+        lv_img_set_zoom(gif_view, 960);
         return;
     }
 
-    /* Static image: stop any running GIF */
-    if (gif_player_loaded) {
-        gif_fast_free(&gif_player);
-        gif_player_loaded = false;
+    /* Static image */
+    if (gif_view) {
+        lv_obj_add_flag(gif_view, LV_OBJ_FLAG_HIDDEN);
     }
-
-    Serial.print("Opening image: ");
-    Serial.println(current_visual_lvgl_path);
     lv_obj_clear_flag(image_view, LV_OBJ_FLAG_HIDDEN);
+    lv_img_set_zoom(image_view, 960);  /* 128 to 480 = 3.75x */
     lv_img_set_src(image_view, current_visual_lvgl_path.c_str());
     lv_obj_center(image_view);
 }
@@ -1232,7 +1246,6 @@ void setup()
 
 void loop()
 {
-    lv_timer_handler();
     server.handleClient();
-    delay(1);
+    lv_timer_handler();
 }

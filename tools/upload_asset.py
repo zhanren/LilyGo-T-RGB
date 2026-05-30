@@ -17,16 +17,17 @@ import urllib.request
 import uuid
 
 
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".mp4"}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif"}
 RESIZABLE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
-DEFAULT_RESIZE_MAX = 480
+DEFAULT_RESIZE_MAX = 128
+MAX_GIF_BYTES = 1024 * 1024
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Upload JPG/PNG/GIF/MP4 files to a folder on the T-RGB SD card."
+        description="Upload display-ready JPG/PNG/GIF files to a folder on the T-RGB SD card."
     )
-    parser.add_argument("files", nargs="*", help="JPG, PNG, GIF, or MP4 files to upload.")
+    parser.add_argument("files", nargs="*", help="JPG, PNG, or GIF files to upload.")
     parser.add_argument(
         "--bot-url",
         required=True,
@@ -55,7 +56,7 @@ def parse_args() -> argparse.Namespace:
         "--resize-max",
         type=int,
         default=DEFAULT_RESIZE_MAX,
-        help="Resize JPG/PNG stills to this max width/height before upload. Defaults to 480.",
+        help="Resize JPG/PNG stills to this max width/height before upload. Defaults to 128.",
     )
     parser.add_argument(
         "--no-resize",
@@ -100,6 +101,11 @@ def validate_file(path_text: str) -> Path:
     if path.suffix.lower() not in ALLOWED_EXTENSIONS:
         allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
         raise RuntimeError(f"Unsupported asset type for {path.name}. Use one of: {allowed}")
+    if path.suffix.lower() == ".gif" and path.stat().st_size >= MAX_GIF_BYTES:
+        raise RuntimeError(
+            f"GIF is {path.stat().st_size} bytes; keep T-RGB GIFs under {MAX_GIF_BYTES} bytes. "
+            "Convert with tools/convert_mp4_loops.py first."
+        )
     return path
 
 
@@ -224,7 +230,7 @@ def main() -> int:
         for path in paths:
             upload_name = args.name or path.name
             if Path(upload_name).suffix.lower() not in ALLOWED_EXTENSIONS:
-                raise RuntimeError(f"Upload name must end with JPG, PNG, GIF, or MP4: {upload_name}")
+                raise RuntimeError(f"Upload name must end with JPG, PNG, or GIF: {upload_name}")
 
             upload_path = path
             note = ""

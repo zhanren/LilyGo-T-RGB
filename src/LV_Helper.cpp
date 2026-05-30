@@ -15,7 +15,6 @@ static lv_disp_draw_buf_t draw_buf;
 static lv_disp_drv_t disp_drv;
 static lv_indev_drv_t  indev_drv;
 static lv_color_t *buf = NULL;
-static lv_color_t *buf1 = NULL;
 
 
 /* Display flushing */
@@ -72,13 +71,14 @@ void beginLvglHelper(LilyGo_Display &board, bool debug)
     }
 #endif
 
-    size_t lv_buffer_size = board.width() * board.height() * sizeof(lv_color_t);
+    /* Single half-height buffer — RGB panel uses DMA flush, no double-buffer needed.
+     * This frees ~690KB PSRAM for GIF frame pre-decoding. */
+    size_t lv_buffer_px = board.width() * (board.height() / 2);
+    size_t lv_buffer_size = lv_buffer_px * sizeof(lv_color_t);
     buf = (lv_color_t *)ps_malloc(lv_buffer_size);
     assert(buf);
-    buf1 = (lv_color_t *)ps_malloc(lv_buffer_size);
-    assert(buf1);
 
-    lv_disp_draw_buf_init( &draw_buf, buf, buf1, board.width() * board.height());
+    lv_disp_draw_buf_init( &draw_buf, buf, NULL, lv_buffer_px);
 
     /*Initialize the display*/
     lv_disp_drv_init( &disp_drv );

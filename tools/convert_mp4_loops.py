@@ -17,13 +17,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("files", nargs="+", help="MP4 files to convert.")
     parser.add_argument(
         "--output-dir",
-        default="examples/lv_single_image/data/gif_loops",
+        default="examples/lv_single_image/data/gif_loops/128",
         help="Directory for generated GIFs.",
     )
-    parser.add_argument("--size", type=int, default=480, help="Maximum GIF width/height. Defaults to 240.")
-    parser.add_argument("--fps", type=int, default=8, help="Output GIF FPS. Defaults to 6.")
-    parser.add_argument("--duration", type=float, default=6, help="Seconds to keep from each MP4. Defaults to 2.0.")
-    parser.add_argument("--colors", type=int, default=256, help="GIF palette colors. Defaults to 64.")
+    parser.add_argument("--size", type=int, default=128, help="Maximum GIF width/height. Defaults to 128.")
+    parser.add_argument("--fps", default="50/3", help="Output GIF FPS. Defaults to 50/3 (~16.7 fps).")
+    parser.add_argument("--duration", type=float, default=3.0, help="Seconds to keep from each MP4. Defaults to 3.0.")
+    parser.add_argument("--colors", type=int, default=256, help="GIF palette colors. Defaults to 256.")
     return parser.parse_args()
 
 

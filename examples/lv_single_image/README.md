@@ -16,12 +16,12 @@ This is the active LilyGo T-RGB bot-face sketch. It displays face-state images f
 - Week 12: prove the T-RGB can write local memory files to the SD card.
 - Week 13: start the companion personality contract and append interaction moments to `/memory/moments.jsonl`.
 - Week 14: add the first presence-first personality loop with richer expression states, ambient micro-motion, and a `/personality` contract endpoint.
-- Week 15: upload JPG, PNG, GIF, and MP4 visual assets to a chosen SD card folder over Wi-Fi.
+- Week 15: upload display-ready JPG, PNG, and GIF visual assets to a chosen SD card folder over Wi-Fi.
 - Week 16: preview any uploaded JPG, PNG, or GIF on the display without reflashing firmware.
 - Week 17: resize JPG/PNG stills during upload so large generated assets stay display-safe.
 - Week 18: bind expression states to uploaded still assets at runtime and persist the mapping on the SD card.
 - Week 19: render uploaded GIF loops for animated expression states.
-- Week 20: convert MP4 expression loops to small GIFs with `ffmpeg` for smoother T-RGB testing.
+- Week 20: convert MP4 source loops to lightweight 128px GIFs with `ffmpeg` for smoother T-RGB testing.
 
 ## SD Card Files
 
@@ -38,6 +38,11 @@ Copy the contents of `examples/lv_single_image/data` to the SD card so the board
 /data/sad.png
 /data/memory.png
 /data/uncertain.png
+/data/gif_loops/128/listen_loop.gif
+/data/gif_loops/128/think_loop.gif
+/data/gif_loops/128/speak_loop.gif
+/data/gif_loops/128/teasing_loop.gif
+/data/gif_loops/128/memory_organizing_loop.gif
 ```
 
 The T-RGB cannot read a macOS path like `/Users/...` while it is running. The images must be on the board's SD card.
@@ -191,7 +196,7 @@ python3 tools/upload_asset.py --bot-url http://192.168.1.123 --folder /data exam
 You can upload several files at once:
 
 ```sh
-python3 tools/upload_asset.py --bot-url 192.168.1.123 --folder /data examples/lv_single_image/data/*.png examples/lv_single_image/data/*.mp4 --list
+python3 tools/upload_asset.py --bot-url 192.168.1.123 --folder /data examples/lv_single_image/data/*.png --list
 ```
 
 Or rename a single uploaded file:
@@ -200,9 +205,9 @@ Or rename a single uploaded file:
 python3 tools/upload_asset.py --bot-url 192.168.1.123 --folder /data ./test.gif --name memory.gif
 ```
 
-Supported upload types are `.jpg`, `.jpeg`, `.png`, `.gif`, and `.mp4`. The current sketch displays JPG, PNG, and GIF assets through LVGL; MP4 files are stored on the SD card for asset iteration but are not played by this firmware yet. The upload endpoint creates the target folder if needed. After replacing an asset that is already on screen, send a `/say` request or reset the board to reload it.
+Supported upload types are `.jpg`, `.jpeg`, `.png`, and `.gif`. Convert MP4 source loops to GIF before uploading. The upload endpoint creates the target folder if needed. After replacing an asset that is already on screen, send a `/say` request or reset the board to reload it.
 
-By default, `tools/upload_asset.py` resizes `.jpg`, `.jpeg`, and `.png` stills to fit inside `480x480` before upload. This keeps large generated assets from overwhelming the T-RGB image decoder. Use `--resize-max 360` for smaller files, or `--no-resize` when you intentionally want to upload the original file unchanged.
+By default, `tools/upload_asset.py` resizes `.jpg`, `.jpeg`, and `.png` stills to fit inside `128x128` before upload. The firmware zooms the lightweight image on-device. GIF uploads are accepted only below 1 MB so they can be preloaded into PSRAM instead of streamed slowly from SD.
 
 ## Week 16: Preview Visual Assets
 
@@ -218,7 +223,11 @@ Use the laptop helper to show an uploaded still image immediately:
 python3 tools/preview_asset.py --bot-url 192.168.1.123 memory.png --text "memory test"
 ```
 
-Preview supports `.jpg`, `.jpeg`, `.png`, and `.gif`. MP4 files can be stored on the SD card, but this firmware does not play them yet.
+Preview supports `.jpg`, `.jpeg`, `.png`, and `.gif`. Use `--clean` for a bare GIF playback test without the badge, Wi-Fi label, or bubble:
+
+```sh
+python3 tools/preview_asset.py --bot-url 192.168.1.123 --folder /data/gif_loops/128 --clean listen_loop.gif
+```
 
 ## Week 18: Runtime Expression Binding
 
@@ -248,12 +257,12 @@ python3 tools/bind_asset.py --bot-url 192.168.1.123 PROUD --reset
 Runtime bindings and previews support `.gif` assets. Upload a GIF, bind it to a state, and `/say` will render it as an animated loop:
 
 ```sh
-python3 tools/upload_asset.py --bot-url 192.168.1.123 --folder /data ./teasing.gif --list
-python3 tools/bind_asset.py --bot-url 192.168.1.123 TEASING teasing.gif
+python3 tools/upload_asset.py --bot-url 192.168.1.123 --folder /data/gif_loops/128 ./teasing.gif --list
+python3 tools/bind_asset.py --bot-url 192.168.1.123 --folder /data/gif_loops/128 TEASING teasing.gif
 python3 tools/ask_bot.py --mock --bot-url 192.168.1.123 --state TEASING --skip-memory-log "gif test"
 ```
 
-Use small, display-sized GIFs for now. The upload helper does not resize GIFs, and MP4 files are still stored only, not played by this firmware.
+Use 128x128 GIFs under 1 MB. The upload helper does not resize GIFs; convert them before upload.
 
 ## Week 20: Convert MP4 Loops To GIF
 
@@ -261,22 +270,22 @@ The T-RGB firmware does not play MP4. Convert MP4 loops to small GIFs with `ffmp
 
 ```sh
 python3 tools/convert_mp4_loops.py examples/lv_single_image/data/*_loop.mp4
-python3 tools/upload_asset.py --bot-url 192.168.1.123 --folder /data/gif_loops examples/lv_single_image/data/gif_loops/*.gif --no-resize
+python3 tools/upload_asset.py --bot-url 192.168.1.123 --folder /data/gif_loops/128 examples/lv_single_image/data/gif_loops/128/*.gif --no-resize
 ```
 
-The default conversion is intentionally conservative: `240px`, `6 fps`, `2 seconds`, and `64` colors. This keeps GIFs closer to a few hundred KB instead of multi-MB. You can adjust the conversion when testing:
+The default conversion matches the current board-friendly format: `128px`, about `16.7 fps`, up to `3 seconds`, and `256` colors. Keep generated GIFs below 1 MB. You can adjust the conversion when testing:
 
 ```sh
-python3 tools/convert_mp4_loops.py examples/lv_single_image/data/teasing_loop.mp4 --size 320 --fps 8 --duration 2
+python3 tools/convert_mp4_loops.py examples/lv_single_image/data/teasing_loop.mp4 --size 128 --fps 12 --duration 2 --colors 128
 ```
 
-For smoother playback, prefer smaller GIFs over larger/full-frame loops. Large GIFs are decoded in software and can feel laggy on the ESP32-S3.
-
-For a full-size but still compressed experiment, keep `480px` and reduce duration/colors before raising FPS:
+Validate the local board asset folder before upload:
 
 ```sh
-python3 tools/convert_mp4_loops.py examples/lv_single_image/data/listen_loop.mp4 --size 480 --fps 12 --duration 2 --colors 32
+python3 .agents/skills/t-rgb-asset-pipeline/scripts/check_t_rgb_assets.py
 ```
+
+For smoother playback, prefer shorter or fewer-frame 128px GIFs over larger/full-frame loops. Large GIFs are decoded in software and can feel laggy on the ESP32-S3.
 
 By default, the script uses `deepseek-v4-flash`. To use another DeepSeek model:
 
