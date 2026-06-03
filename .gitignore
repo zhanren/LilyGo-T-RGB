@@ -59,6 +59,7 @@ datas
 .env
 examples/lv_single_image/wifi_config.h
 examples/lv_single_image/wifi_config.example copy.h
+examples/s3_mic_bridge/src/mic_config.h
 
 #Mac specific
 *.DS_Store

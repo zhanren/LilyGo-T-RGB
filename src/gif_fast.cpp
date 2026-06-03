@@ -84,13 +84,11 @@ static void loader_timer_cb(lv_timer_t *t)
     if (player->gif)
         return;  /* More frames to load next tick */
 
-    /* Loading done (or PSRAM full) — start smooth playback */
+    /* Loading done — start playback at frame 2 immediately */
     lv_timer_del(t);
     player->load_timer = NULL;
 
-    uint32_t delay = player->frames[0].delay_ms;
-    if (delay < 10) delay = 10;
-    player->play_timer = lv_timer_create(play_timer_cb, delay, player);
+    player->play_timer = lv_timer_create(play_timer_cb, 1, player);  /* fire now */
 }
 
 /* ------------------------------------------------------------------ */
@@ -138,7 +136,7 @@ bool gif_fast_load(gif_fast_t *player, const char *lvgl_path)
     player->width  = gif->width;
     player->height = gif->height;
 
-    /* Decode first frame synchronously — fast, just one LZW decode */
+    /* Decode frame 1 synchronously (~15ms) — near-instant transition */
     int has_first = gd_get_frame(gif);
     if (has_first <= 0) {
         free(player->frames); gd_close_gif(gif); return false;
@@ -181,11 +179,11 @@ void gif_fast_play(gif_fast_t *player, lv_obj_t *img)
     lv_obj_clear_flag(img, LV_OBJ_FLAG_HIDDEN);
 
     if (player->gif) {
-        /* Still decoding — start background loader only.
-         * Playback will auto-start when all frames are ready. */
+        /* More frames to decode — start background loader.
+         * Playback auto-starts when loader finishes. */
         player->load_timer = lv_timer_create(loader_timer_cb, 1, player);
     } else {
-        /* All frames already decoded — start playback immediately */
+        /* All frames already decoded */
         uint32_t delay = player->frames[0].delay_ms;
         if (delay < 10) delay = 10;
         player->play_timer = lv_timer_create(play_timer_cb, delay, player);

@@ -13,6 +13,10 @@
 #include <WiFi.h>
 #include <ctype.h>
 
+extern "C" {
+#include "gif_fast.h"
+}
+
 #if __has_include("wifi_config.h")
 #include "wifi_config.h"
 #else
@@ -33,6 +37,12 @@
 #define SD_FACE_BINDINGS_PATH "/memory/face_bindings.csv"
 #define SD_WRITE_TEST_PATH "/memory/sd_write_test.txt"
 #define SD_MOMENTS_PATH "/memory/moments.jsonl"
+#define SD_COMPANION_SELF_PATH "/memory/companion_self.json"
+#define SD_USER_FACTS_PATH "/memory/user_facts.json"
+#define SD_SHARED_PHRASES_PATH "/memory/shared_phrases.jsonl"
+#define SD_BOUNDARIES_PATH "/memory/boundaries.json"
+#define SD_BACKSTORY_FRAGMENTS_PATH "/memory/backstory_fragments.json"
+#define SD_CONSOLIDATION_LOCK_PATH "/memory/.consolidation_lock"
 
 struct FaceState {
     const char *name;
@@ -73,12 +83,11 @@ static lv_obj_t *status_label = NULL;
 static lv_obj_t *bubble = NULL;
 static lv_obj_t *bubble_label = NULL;
 static lv_obj_t *image_view = NULL;
-static lv_obj_t *gif_view = NULL;
-static uint8_t *gif_ram_buf = NULL;    /* GIF loaded into PSRAM for fast decode */
-static lv_img_dsc_t gif_ram_dsc;       /* descriptor pointing to RAM buffer */
+static gif_fast_t gif_player;
+static bool gif_loaded = false;
 static String current_visual_lvgl_path = "";
 static bool visual_asset_is_gif = false;
-static bool chrome_visible = true;
+static bool chrome_visible = false;
 static lv_obj_t *state_badge = NULL;
 static lv_obj_t *state_badge_label = NULL;
 static lv_obj_t *wifi_label = NULL;
@@ -102,6 +111,8 @@ bool appendSdWriteTest(const char *source, size_t *file_size);
 bool appendMomentLog(const String &line, size_t *file_size);
 String jsonEscape(const String &value);
 String getStateList();
+bool writeMemoryFile(const char *path, const String &content, size_t *file_size);
+String readMemoryFile(const char *path);
 String sanitizeAssetFolder(const String &folder);
 String sanitizeAssetFilename(const String &filename);
 bool ensureSdDir(const String &dir);
@@ -188,10 +199,8 @@ void setChromeVisible(bool visible)
 
 void showTextBubble(const char *state_name, const char *message)
 {
-    setChromeVisible(true);
     lv_label_set_text(state_badge_label, state_name);
     lv_label_set_text(bubble_label, message);
-    lv_obj_align(bubble, LV_ALIGN_BOTTOM_MID, 0, -24);
     Serial.print(state_name);
     Serial.print(": ");
     Serial.println(message);
@@ -599,53 +608,21 @@ void showVisualAsset(const String &path)
     visual_asset_is_gif = isGifAssetFilename(path);
 
     if (visual_asset_is_gif) {
-        if (!gif_view) {
-            gif_view = lv_gif_create(lv_scr_act());
+        if (gif_loaded) { gif_fast_free(&gif_player); gif_loaded = false; }
+
+        if (gif_fast_load(&gif_player, current_visual_lvgl_path.c_str())) {
+            gif_loaded = true;
+            gif_fast_play(&gif_player, image_view);
+        } else {
+            visual_asset_is_gif = false;
         }
-
-        /* Free previous RAM buffer */
-        if (gif_ram_buf) { free(gif_ram_buf); gif_ram_buf = NULL; }
-
-        /* Pre-load entire GIF into PSRAM to eliminate SD reads during playback. */
-        File f = SD_MMC.open(path.c_str());
-        if (f) {
-            size_t sz = f.size();
-            if (sz > 0 && sz < 1024 * 1024) {  /* up to 1MB */
-                gif_ram_buf = (uint8_t *)ps_malloc(sz);
-                if (gif_ram_buf) {
-                    f.read(gif_ram_buf, sz);
-                    gif_ram_dsc.data = gif_ram_buf;
-                    gif_ram_dsc.data_size = sz;
-                    gif_ram_dsc.header.always_zero = 0;
-                    gif_ram_dsc.header.cf = LV_IMG_CF_RAW;
-                    f.close();
-
-                    lv_obj_add_flag(image_view, LV_OBJ_FLAG_HIDDEN);
-                    lv_obj_clear_flag(gif_view, LV_OBJ_FLAG_HIDDEN);
-                    lv_gif_set_src(gif_view, &gif_ram_dsc);  /* from RAM! */
-                    lv_obj_center(gif_view);
-                    lv_img_set_zoom(gif_view, 960);
-                    return;
-                }
-            }
-            f.close();
-        }
-
-        /* Fallback: load from SD (slower) */
-        lv_obj_add_flag(image_view, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(gif_view, LV_OBJ_FLAG_HIDDEN);
-        lv_gif_set_src(gif_view, current_visual_lvgl_path.c_str());
-        lv_obj_center(gif_view);
-        lv_img_set_zoom(gif_view, 960);
         return;
     }
 
     /* Static image */
-    if (gif_view) {
-        lv_obj_add_flag(gif_view, LV_OBJ_FLAG_HIDDEN);
-    }
+    if (gif_loaded) { gif_fast_free(&gif_player); gif_loaded = false; }
     lv_obj_clear_flag(image_view, LV_OBJ_FLAG_HIDDEN);
-    lv_img_set_zoom(image_view, 960);  /* 128 to 480 = 3.75x */
+    lv_img_set_zoom(image_view, 256);
     lv_img_set_src(image_view, current_visual_lvgl_path.c_str());
     lv_obj_center(image_view);
 }
@@ -760,6 +737,10 @@ void handleRoot()
         "  http://" + ip + "/assets?folder=/data\n\n"
         "  http://" + ip + "/preview?file=memory.png&text=Memory%20test\n\n"
         "  http://" + ip + "/bind?state=PROUD&file=pround.png\n\n"
+        "  http://" + ip + "/memory/moments.jsonl\n"
+        "  http://" + ip + "/memory/file?name=companion_self.json\n"
+        "  http://" + ip + "/memory/status\n"
+        "  POST http://" + ip + "/memory/consolidate\n\n"
         "States: " + getStateList() + "\n";
 
     server.send(200, "text/plain", body);
@@ -1120,6 +1101,284 @@ void handleLog()
     server.send(ok ? 200 : 500, "application/json", body);
 }
 
+/* ── Memory Second Prototype: download moments.jsonl ── */
+void handleMemoryMomentsDownload()
+{
+    if (!SD_MMC.exists(SD_MOMENTS_PATH)) {
+        server.send(200, "application/jsonl", "");
+        return;
+    }
+
+    File file = SD_MMC.open(SD_MOMENTS_PATH, FILE_READ);
+    if (!file) {
+        server.send(500, "application/json", "{\"ok\":false,\"error\":\"cannot open moments log\"}");
+        return;
+    }
+
+    server.setContentLength(file.size());
+    server.send(200, "application/jsonl", "");
+
+    /* Stream in chunks to avoid loading the whole file into RAM */
+    uint8_t buf[512];
+    while (file.available()) {
+        size_t len = file.read(buf, sizeof(buf));
+        server.client().write(buf, len);
+    }
+    file.close();
+}
+
+/* ── Memory Second Prototype: receive consolidated memory files ── */
+void handleMemoryConsolidate()
+{
+    /* Check consolidation lock */
+    if (SD_MMC.exists(SD_CONSOLIDATION_LOCK_PATH)) {
+        server.send(409, "application/json", "{\"ok\":false,\"error\":\"consolidation already in progress\"}");
+        return;
+    }
+
+    /* Show the companion is organizing memory */
+    int mem_idx = findFaceStateIndex("MEMORY");
+    if (mem_idx >= 0) {
+        current_state = (size_t)mem_idx;
+        showFaceState(current_state);
+        showTextBubble("MEMORY", "Sorting memory...");
+    }
+    last_remote_message_ms = millis();
+
+    /* Create lock file */
+    File lock = SD_MMC.open(SD_CONSOLIDATION_LOCK_PATH, FILE_WRITE);
+    if (lock) {
+        lock.print(String(millis()));
+        lock.close();
+    }
+
+    String body = server.arg("plain");
+    if (body.length() == 0) {
+        SD_MMC.remove(SD_CONSOLIDATION_LOCK_PATH);
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"empty body\"}");
+        return;
+    }
+
+    /* Parse the JSON payload: { "files": { "companion_self.json": "...", ... }, "reset_moments": true } */
+    /* Simple key-value parsing for embedded JSON (no full parser available) */
+    struct MemFile {
+        const char *path;
+        String content;
+        bool written;
+        size_t size;
+    };
+
+    MemFile files[] = {
+        {SD_COMPANION_SELF_PATH, "", false, 0},
+        {SD_USER_FACTS_PATH, "", false, 0},
+        {SD_SHARED_PHRASES_PATH, "", false, 0},
+        {SD_BOUNDARIES_PATH, "", false, 0},
+        {SD_BACKSTORY_FRAGMENTS_PATH, "", false, 0},
+    };
+    const size_t file_count = sizeof(files) / sizeof(files[0]);
+
+    /* Extract each file's content from the JSON body using simple string search */
+    for (size_t i = 0; i < file_count; i++) {
+        String key = "\"" + String(files[i].path).substring(String(files[i].path).lastIndexOf('/') + 1) + "\":\"";
+        int key_pos = body.indexOf(key);
+        if (key_pos < 0) {
+            continue;
+        }
+
+        int val_start = key_pos + key.length();
+        int val_end = val_start;
+        while (val_end < (int)body.length()) {
+            char c = body.charAt(val_end);
+            if (c == '"' && (val_end == val_start || body.charAt(val_end - 1) != '\\')) {
+                break;
+            }
+            val_end++;
+        }
+
+        if (val_end > val_start) {
+            String raw = body.substring(val_start, val_end);
+            /* Unescape \" and \\ */
+            raw.replace("\\\"", "\"");
+            raw.replace("\\\\", "\\");
+            raw.replace("\\n", "\n");
+            files[i].content = raw;
+        }
+    }
+
+    /* Check if caller wants to reset (truncate) moments.jsonl after a successful consolidation */
+    bool reset_moments = body.indexOf("\"reset_moments\":true") >= 0 || body.indexOf("\"reset_moments\": true") >= 0;
+    size_t moments_old_size = 0;
+    if (reset_moments && SD_MMC.exists(SD_MOMENTS_PATH)) {
+        File mf = SD_MMC.open(SD_MOMENTS_PATH, FILE_READ);
+        if (mf) { moments_old_size = mf.size(); mf.close(); }
+    }
+
+    /* Write each non-empty file */
+    size_t written_count = 0;
+    for (size_t i = 0; i < file_count; i++) {
+        if (files[i].content.length() == 0) {
+            continue;
+        }
+        size_t fsize = 0;
+        if (writeMemoryFile(files[i].path, files[i].content, &fsize)) {
+            files[i].written = true;
+            files[i].size = fsize;
+            written_count++;
+        }
+    }
+
+    /* Truncate moments if requested and at least one file was written */
+    bool moments_reset = false;
+    if (reset_moments && written_count > 0) {
+        File mf = SD_MMC.open(SD_MOMENTS_PATH, FILE_WRITE);
+        if (mf) { mf.close(); moments_reset = true; }
+    }
+
+    /* Remove lock */
+    SD_MMC.remove(SD_CONSOLIDATION_LOCK_PATH);
+
+    /* Build response */
+    String resp = "{\"ok\":true,\"written\":" + String((unsigned int)written_count) + ",";
+    resp += "\"files\":[";
+    bool first = true;
+    for (size_t i = 0; i < file_count; i++) {
+        if (!files[i].written) continue;
+        if (!first) resp += ",";
+        resp += "{\"path\":\"" + jsonEscape(files[i].path) + "\",\"size\":" + String((unsigned int)files[i].size) + "}";
+        first = false;
+    }
+    resp += "],\"moments_reset\":" + String(moments_reset ? "true" : "false");
+    if (moments_reset) resp += ",\"moments_old_size\":" + String((unsigned int)moments_old_size);
+    resp += "}";
+
+    showTextBubble("MEMORY", "Memory sorted.");
+    last_remote_message_ms = millis();
+    server.send(200, "application/json", resp);
+}
+
+/* ── Memory Second Prototype: memory file status ── */
+void handleMemoryStatus()
+{
+    const char *paths[] = {
+        SD_MOMENTS_PATH,
+        SD_COMPANION_SELF_PATH,
+        SD_USER_FACTS_PATH,
+        SD_SHARED_PHRASES_PATH,
+        SD_BOUNDARIES_PATH,
+        SD_BACKSTORY_FRAGMENTS_PATH,
+        SD_FACE_BINDINGS_PATH,
+    };
+    const size_t path_count = sizeof(paths) / sizeof(paths[0]);
+
+    String body = "{\"ok\":true,\"files\":[";
+    for (size_t i = 0; i < path_count; i++) {
+        if (i > 0) body += ",";
+        body += "{\"path\":\"" + jsonEscape(paths[i]) + "\"";
+        if (SD_MMC.exists(paths[i])) {
+            File f = SD_MMC.open(paths[i], FILE_READ);
+            if (f) {
+                body += ",\"size\":" + String((unsigned int)f.size());
+                f.close();
+            }
+        } else {
+            body += ",\"size\":0";
+        }
+        body += "}";
+    }
+    body += "],\"consolidation_locked\":";
+    body += SD_MMC.exists(SD_CONSOLIDATION_LOCK_PATH) ? "true" : "false";
+    body += "}";
+
+    server.send(200, "application/json", body);
+}
+
+/* ── Memory Second Prototype: read individual memory file ── */
+void handleMemoryFile()
+{
+    String name = server.arg("name");
+    if (name.length() == 0) {
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"?name= is required\"}");
+        return;
+    }
+
+    /* Whitelist allowed memory file names */
+    if (name.indexOf("..") >= 0 || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0) {
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"invalid name\"}");
+        return;
+    }
+
+    String path = String(SD_MEMORY_DIR) + "/" + name;
+    if (!SD_MMC.exists(path.c_str())) {
+        server.send(404, "application/json", "{\"ok\":false,\"error\":\"not found\"}");
+        return;
+    }
+
+    File file = SD_MMC.open(path.c_str(), FILE_READ);
+    if (!file) {
+        server.send(500, "application/json", "{\"ok\":false,\"error\":\"cannot open file\"}");
+        return;
+    }
+
+    String content = file.readString();
+    file.close();
+
+    /* Return as JSON with the content embedded */
+    String body = "{\"ok\":true,\"name\":\"";
+    body += jsonEscape(name);
+    body += "\",\"size\":";
+    body += String((unsigned int)content.length());
+    body += ",\"content\":\"";
+    body += jsonEscape(content);
+    body += "\"}";
+
+    server.send(200, "application/json", body);
+}
+
+/* ── Memory helpers ── */
+bool writeMemoryFile(const char *path, const String &content, size_t *file_size)
+{
+    if (!ensureMemoryDir()) {
+        return false;
+    }
+
+    File file = SD_MMC.open(path, FILE_WRITE);
+    if (!file) {
+        Serial.printf("Failed to open %s for write\n", path);
+        return false;
+    }
+
+    size_t written = file.print(content);
+    file.close();
+
+    if (written != content.length()) {
+        Serial.printf("Short write to %s: %u of %u bytes\n", path, (unsigned int)written, (unsigned int)content.length());
+        return false;
+    }
+
+    if (file_size) {
+        *file_size = written;
+    }
+
+    Serial.printf("Memory file written: %s size=%u\n", path, (unsigned int)written);
+    return true;
+}
+
+String readMemoryFile(const char *path)
+{
+    if (!SD_MMC.exists(path)) {
+        return "";
+    }
+
+    File file = SD_MMC.open(path, FILE_READ);
+    if (!file) {
+        return "";
+    }
+
+    String content = file.readString();
+    file.close();
+    return content;
+}
+
 void handleSay()
 {
     String text = server.arg("text");
@@ -1162,6 +1421,10 @@ void startHttpServer()
     server.on("/bindings", HTTP_GET, handleListBindings);
     server.on("/bind", HTTP_GET, handleBindAsset);
     server.on("/upload", HTTP_POST, handleAssetUploadComplete, handleAssetUpload);
+    server.on("/memory/moments.jsonl", HTTP_GET, handleMemoryMomentsDownload);
+    server.on("/memory/consolidate", HTTP_POST, handleMemoryConsolidate);
+    server.on("/memory/status", HTTP_GET, handleMemoryStatus);
+    server.on("/memory/file", HTTP_GET, handleMemoryFile);
     server.begin();
 
     String ip = WiFi.localIP().toString();
@@ -1234,6 +1497,9 @@ void setup()
     createStateBadge();
     createWifiLabel();
     createTextBubble();
+
+    /* Hide all chrome — clean display */
+    setChromeVisible(false);
 
     if (!showFaceState(current_state)) {
         return;

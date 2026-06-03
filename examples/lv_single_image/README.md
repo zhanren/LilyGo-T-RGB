@@ -178,6 +178,55 @@ http://192.168.1.123/personality
 
 Use this to check which expression states the laptop-side personality prompt is allowed to choose and how the firmware is currently mapping those states to local face assets.
 
+## Memory Second Prototype: Consolidation
+
+The companion now supports a three-layer memory pipeline. Raw interaction moments from `/memory/moments.jsonl` are periodically consolidated into durable memory files by a laptop-side script that uses DeepSeek to summarize and extract meaning.
+
+### Durable Memory Files
+
+| File | Purpose |
+|---|---|
+| `companion_self.json` | What the companion learns about itself (traits, preferences, growth) |
+| `user_facts.json` | Facts and preferences about the user |
+| `shared_phrases.jsonl` | Inside jokes, recurring phrases, shared rituals |
+| `boundaries.json` | User-set boundaries and companion's soft limits |
+| `backstory_fragments.json` | Emerged fragments of companion origin story |
+
+### Memory Endpoints
+
+```text
+GET  http://192.168.1.123/memory/moments.jsonl     # Download raw moments log
+GET  http://192.168.1.123/memory/status             # File sizes and lock state
+GET  http://192.168.1.123/memory/file?name=companion_self.json  # Read one memory file
+POST http://192.168.1.123/memory/consolidate        # Receive consolidated files
+```
+
+### Run Consolidation
+
+```sh
+python3 tools/consolidate_memory.py --bot-url http://192.168.1.123
+```
+
+The script:
+1. Downloads `moments.jsonl` and existing memory files from the device.
+2. Sends everything to DeepSeek with a consolidation prompt.
+3. POSTs the updated memory files back to the device.
+4. The companion shows "排序记忆中..." (Sorting memory...) during consolidation.
+
+Use `--reset-moments` to truncate the moments log after a successful consolidation:
+
+```sh
+python3 tools/consolidate_memory.py --bot-url http://192.168.1.123 --reset-moments
+```
+
+Test without calling DeepSeek:
+
+```sh
+python3 tools/consolidate_memory.py --bot-url http://192.168.1.123 --dry-run
+```
+
+The consolidation lock (`/memory/.consolidation_lock`) prevents concurrent consolidations. If the companion shows the lock is held, wait and retry.
+
 ## Week 15: Upload Visual Assets
 
 The firmware exposes:
@@ -286,6 +335,45 @@ python3 .agents/skills/t-rgb-asset-pipeline/scripts/check_t_rgb_assets.py
 ```
 
 For smoother playback, prefer shorter or fewer-frame 128px GIFs over larger/full-frame loops. Large GIFs are decoded in software and can feel laggy on the ESP32-S3.
+
+## Procedural Eye Assets
+
+For a simpler robot-screen look, generate low-detail pixel-eye PNG/GIF assets instead of AI-rendered character art.
+The current T-RGB-friendly target is a fast 5-frame GIF loop: 128x128, 16 colors, about 60 ms per frame, and under 6 KB per state.
+
+```sh
+python3 tools/generate_eye_assets.py
+```
+
+This writes the current display-safe set:
+
+```text
+examples/lv_single_image/data/eye_assets_perf_fast/128x128/
+```
+
+Upload and bind the fast loops with:
+
+```sh
+python3 tools/generate_eye_assets.py
+python3 tools/upload_asset.py --bot-url 192.168.1.123 --folder /data/gif_loops/128_5f_fast examples/lv_single_image/data/eye_assets_perf_fast/128x128/*_loop.gif --no-resize --list
+python3 tools/bind_asset.py --bot-url 192.168.1.123 --folder /data/gif_loops/128_5f_fast IDLE idle_loop.gif
+```
+
+Keep animations tiny: blink, eye position, brightness pulse, and subtle mouth motion. Avoid full-screen video, large GIFs, and high-color gradients when testing on ESP32.
+
+The generated states intentionally use distinct readable cues:
+
+- `listening`: a side receiver dish with small wave pulses.
+- `thinking`: a tiny antenna and soft particles.
+- `speaking`: pulsing eyes and a small mouth.
+- `teasing`: a wink, small smile, and sparkle.
+- `annoyed`: compressed eyes, sharp brows, and a tiny shake.
+- `proud`: bright confident eyes, lifted brows, and a small smile.
+- `sleepy`: dim eyes with a floating `Z`.
+- `memory`: closed eyes, antenna pulse, and memory particles.
+- `uncertain`: asymmetric eyes plus a small sweat drop.
+
+The default generator writes only static PNG anchors, `*_loop.gif` files, and `contact_sheet.png`. Use `--with-transitions` only for experiments; transition clips are not part of the final fast T-RGB asset set.
 
 By default, the script uses `deepseek-v4-flash`. To use another DeepSeek model:
 

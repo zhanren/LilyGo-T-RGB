@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pixel Expression Art Director"
+  short_description: "Guide and QA small-screen pixel expressions"
+  default_prompt: "Use $pixel-expression-art-director to critique and improve the pixel eye expression assets."
