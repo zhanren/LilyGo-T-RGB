@@ -21,3 +21,12 @@
 // Voice activity threshold in dBFS. Raise this if normal room noise triggers it.
 #define VOICE_TRIGGER_DBFS -35.0
 #define VOICE_NOTIFY_COOLDOWN_MS 4000
+
+// Optional voice-out test path for a MAX98357A-style I2S amplifier.
+// Do not connect a bare speaker directly to ESP32-S3 GPIO pins.
+#define SPEAKER_ENABLED 1
+#define SPEAKER_I2S_BCLK_PIN 13
+#define SPEAKER_I2S_LRC_PIN 14
+#define SPEAKER_I2S_DIN_PIN 15
+#define SPEAKER_SAMPLE_RATE 22050
+#define SPEAKER_BEEP_ON_VOICE 1

@@ -33,6 +33,7 @@ MEMORY_FILES = [
     "shared_phrases.jsonl",
     "boundaries.json",
     "backstory_fragments.json",
+    "personality_override.json",
 ]
 
 CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation agent for a small AI companion named "Xiao Hui" (小灰).
@@ -55,6 +56,8 @@ Rules:
   Format: {"user_boundaries": [...], "companion_boundaries": [...], "last_updated_ms": 0}
 - backstory_fragments.json: fragments of the companion's origin story that have emerged.
   Format: {"fragments": [{"fragment": "...", "source": "user_reveal|companion_hint|memory_emergence"}], "last_updated_ms": 0}
+- personality_override.json: evolved personality traits the companion has developed through interaction.
+  Format: {"add_traits": ["increasingly sassy", "loves puns"], "add_interests": ["火锅", "西湖"], "note": "why these changed"}
 
 Return ONLY a JSON object with this exact shape:
 {
@@ -62,7 +65,8 @@ Return ONLY a JSON object with this exact shape:
   "user_facts.json": "...",
   "shared_phrases.jsonl": "...",
   "boundaries.json": "...",
-  "backstory_fragments.json": "..."
+  "backstory_fragments.json": "...",
+  "personality_override.json": "..."
 }
 
 Each value must be the complete, valid JSON/JSONL string for that file.

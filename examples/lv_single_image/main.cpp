@@ -43,6 +43,7 @@ extern "C" {
 #define SD_BOUNDARIES_PATH "/memory/boundaries.json"
 #define SD_BACKSTORY_FRAGMENTS_PATH "/memory/backstory_fragments.json"
 #define SD_CONSOLIDATION_LOCK_PATH "/memory/.consolidation_lock"
+#define SD_PERSONALITY_OVERRIDE_PATH "/memory/personality_override.json"
 
 struct FaceState {
     const char *name;
@@ -69,6 +70,18 @@ const FaceState face_states[] = {
     {"MAD", "/data/angry.png", "Not amused.", 5000},
     {"TIRED", "/data/sad.png", "Low energy...", 6000},
     {"HUNGARY", "/data/main.png", "Special outfit.", 5000},
+
+    // Extended companion states — reuse closest existing assets.
+    {"MISHEARD", "/data/uncertain.png", "Didn't catch that.", 4000},
+    {"ACK", "/data/main.png", "Got it.", 3000},
+    {"DEEP_THINK", "/data/confused.png", "Deep thinking...", 6500},
+    {"RECALL", "/data/memory.png", "Remembering...", 5500},
+    {"DELIGHT", "/data/pround.png", "Oh!", 4500},
+    {"CONCERN", "/data/sad.png", "Hmm...", 5000},
+    {"BOUNDARY", "/data/angry.png", "Soft boundary.", 5000},
+    {"INITIATE", "/data/surprised.png", "Hi.", 4000},
+    {"CAMERA_CURIOUS", "/data/innocent.png", "What's that?", 4000},
+    {"ATTENTION", "/data/innocent.png", "Hm?", 3500},
 };
 
 const size_t face_state_count = sizeof(face_states) / sizeof(face_states[0]);
@@ -1115,10 +1128,24 @@ void handleMemoryMomentsDownload()
         return;
     }
 
-    server.setContentLength(file.size());
+    size_t total_size = file.size();
+
+    /* ?tail=N: only send the last N bytes (fast approximate last-N-lines) */
+    String tail_arg = server.arg("tail");
+    if (tail_arg.length() > 0) {
+        long tail_bytes = tail_arg.toInt();
+        if (tail_bytes > 0 && (size_t)tail_bytes < total_size) {
+            file.seek(total_size - (size_t)tail_bytes);
+            /* Skip partial first line */
+            while (file.available() && file.read() != '\n') {}
+            total_size = file.size() - file.position();
+        }
+    }
+
+    server.setContentLength(total_size);
     server.send(200, "application/jsonl", "");
 
-    /* Stream in chunks to avoid loading the whole file into RAM */
+    /* Stream in chunks */
     uint8_t buf[512];
     while (file.available()) {
         size_t len = file.read(buf, sizeof(buf));
@@ -1174,6 +1201,7 @@ void handleMemoryConsolidate()
         {SD_SHARED_PHRASES_PATH, "", false, 0},
         {SD_BOUNDARIES_PATH, "", false, 0},
         {SD_BACKSTORY_FRAGMENTS_PATH, "", false, 0},
+        {SD_PERSONALITY_OVERRIDE_PATH, "", false, 0},
     };
     const size_t file_count = sizeof(files) / sizeof(files[0]);
 
@@ -1267,6 +1295,7 @@ void handleMemoryStatus()
         SD_BOUNDARIES_PATH,
         SD_BACKSTORY_FRAGMENTS_PATH,
         SD_FACE_BINDINGS_PATH,
+        SD_PERSONALITY_OVERRIDE_PATH,
     };
     const size_t path_count = sizeof(paths) / sizeof(paths[0]);
 

@@ -19,23 +19,48 @@ Use this table before drawing or editing:
 | State | Primary cue | Secondary cue | Motion cue | Must not look like |
 |---|---|---|---|---|
 | idle | balanced eyes | gentle glow | blink / tiny look-around | blank loading screen |
+| attention | widened eyes | exclamation/wake ping | small pop-in | alarm / panic |
 | listening | obvious receiver/ear shape | widened focused eyes | receiver pops out / wave pulses | antenna, horn, random icon |
-| thinking | top antenna or small dot cluster | upward eyes | slow pulse / particle orbit | generic loading spinner |
-| speaking | mouth slot or voice bars | eye pulse | mouth open-close rhythm | exact lip sync / shouting |
-| teasing | side-eye | raised brow | pause then sideways glance | angry / romantic |
-| annoyed | sharp brows | compressed eyes | tiny shake / brightness snap | evil / broken screen |
-| proud | lifted brows / confident smile | brighter eyes | sparkle or tiny glow swell | teasing / smug villain |
-| sleepy | Z or drooping lids | dim glow | slow blink / Z float | sad / dead |
-| memory | closed eyes + memory orbit | soft pulse | particles gather inward | sleeping / magic explosion |
-| uncertain | question tick or sweat drop | asymmetric eyes | tiny wobble | panic / crying |
+| ack | small smile | OK hand | tiny bounce | full happy / applause |
+| thinking | raised brow + thought bubble | antenna or pupils | slow pulse / particle orbit | generic loading spinner |
+| deep_think | narrowed focus | orbit dots | slow orbit | sleepy / frozen |
+| recall | archive cue | dimmer pupils | tiny retrieval pulse | memory storage |
+| speaking | mouth slot or voice bars | eye pulse | mouth/bars open-close rhythm | exact lip sync / shouting |
+| teasing | clean wink | raised brow + smirk | pause then sideways glance | angry / romantic |
+| annoyed | sharp brows | compressed eyes + fume tick | tiny shake / brightness snap | evil / broken screen |
+| proud | star eyes | confident smile | sparkle or nod-like glow swell | delight / smug villain |
+| delight | cyan heart eyes | big smile + sparkle | bounce / shimmer | color-theme break |
+| concern | inner-brow feel | soft frown | slow dim pulse | panic / crying |
+| sleepy | crescent lids | Z | slow blink / Z float | sad / dead |
+| memory | closed eyes + memory ring | soft pulse | particles gather inward | sleeping / magic explosion |
+| uncertain | question tick + sweat drop | asymmetric eyes | tiny wobble | panic / crying |
+| boundary | flat calm eyes | stop hand | small steady hold | angry / scolding |
+| misheard | receiver + question cue | sweat drop | retry/listen wobble | normal listening |
+| initiate | wave hand | exclamation/wake ping | small wave | random greeting icon |
+| camera_curious | scan frame | pupils | sweep | thinking / loading |
 
 ## Design Rules
 
 - Use few large shapes readable at native 480×480.
 - Prefer symbolic props over literal details: listening dish, question tick, sleep Z,
   memory pulse, sharp brows.
+- Prefer emoji-grade silhouettes when emotion should be instantly readable: heart eyes for
+  delight/excitement, a clean wink for teasing, sweat/question cues for uncertainty or
+  misheard input.
+- Keep one visual theme across all states. Change shape, scale, pose, timing, and brightness,
+  but do not introduce a new color family for a single emotion unless the whole set is rethemed.
+- Use Giphy/emoji references as motion and silhouette research only. Do not copy source art;
+  translate popular cues into the T-RGB cyan companion language.
+- Default to eye/pose/motion-led expressions. Mouths are exceptional and must be designed as
+  part of the face; do not add mouth marks to every emotion.
+- Avoid punctuation-sign props such as floating question marks or exclamation points. Use gaze,
+  asymmetry, sweat, receiver motion, or thought-bubble geometry instead.
+- Speaking should read as voice activity through side waves, eye pulse, or rhythmic glow; avoid
+  equalizer bars or a pasted-on mouth under the eyes.
 - Leave negative space around accessories; tiny attached details become noise.
 - Use one accent color family with brightness changes for emotion.
+- Use thick curved/capped strokes or filled shapes for mouths and brows. Avoid single-line
+  mouths or tiny eyebrow ticks that look like unfinished debug art.
 - Use 1–2 px outlines around important shapes.
 - Avoid tiny facial features, thin curves, gradients, or decorative particles that
   don't read at native size.

@@ -15,15 +15,25 @@ from PIL import Image, ImageDraw
 
 DEFAULT_STATES = [
     "idle",
+    "attention",
     "listening",
+    "ack",
     "thinking",
+    "deep_think",
+    "recall",
     "speaking",
     "teasing",
     "annoyed",
     "proud",
+    "delight",
+    "concern",
     "sleepy",
     "memory",
     "uncertain",
+    "boundary",
+    "misheard",
+    "initiate",
+    "camera_curious",
 ]
 
 _EYE_SCALE = 1.0  # overridden from argparse
@@ -37,6 +47,7 @@ class Eye:
     h: float
     tilt: float = 0.0
     brightness: float = 1.0
+    shape: str = "round_rect"
 
 
 @dataclass(frozen=True)
@@ -53,6 +64,7 @@ class Face:
     zzz: tuple[float, float, float] | None = None
     antenna: tuple[float, float, float, float] | None = None
     sparkle: tuple[float, float, float] | None = None
+    props: tuple[tuple[str, float, float, float, float], ...] = ()
     shake_x: float = 0.0
 
 
@@ -60,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Generate low-complexity pixel-eye PNG/GIF assets for ESP32/LVGL screens. "
-            "The defaults favor the current T-RGB fast GIF target: 5 frames, small canvas, few colors."
+            "The defaults favor the current T-RGB fast GIF target: 480x480 native, short loop, few colors."
         )
     )
     parser.add_argument(
@@ -70,9 +82,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--preset",
-        choices=["st7789-170x320", "trgb-128", "both"],
-        default="trgb-128",
-        help="Output size preset. Defaults to trgb-128.",
+        choices=["st7789-170x320", "trgb-128", "trgb-480", "both"],
+        default="trgb-480",
+        help="Output size preset. Defaults to trgb-480.",
     )
     parser.add_argument("--width", type=int, help="Custom canvas width. Overrides --preset.")
     parser.add_argument("--height", type=int, help="Custom canvas height. Overrides --preset.")
@@ -88,7 +100,7 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_STATES,
         help=f"States to generate. Defaults to: {' '.join(DEFAULT_STATES)}.",
     )
-    parser.add_argument("--fps", type=int, default=20, help="GIF frame rate. Defaults to 20.")
+    parser.add_argument("--fps", type=int, default=28, help="GIF frame rate. Defaults to 28.")
     parser.add_argument("--seconds", type=float, default=0.50, help="GIF duration. Defaults to 0.50.")
     parser.add_argument("--pixel-size", type=int, default=4, help="Pixel block size. Defaults to 4.")
     parser.add_argument("--colors", type=int, default=16, help="GIF palette colors. Defaults to 16.")
@@ -128,6 +140,8 @@ def preset_sizes(args: argparse.Namespace) -> list[tuple[str, int, int]]:
         return [("170x320", 170, 320)]
     if args.preset == "trgb-128":
         return [("128x128", 128, 128)]
+    if args.preset == "trgb-480":
+        return [("480x480", 480, 480)]
     return [("170x320", 170, 320), ("128x128", 128, 128)]
 
 
@@ -168,7 +182,7 @@ def face_for_state(state: str, t: float, width: int, height: int) -> Face:
 
     bounce = math.sin(t * math.tau) * 2.0 * scale
     blink = 1.0
-    if state in {"idle", "listening"} and 0.12 < t < 0.20:
+    if state in {"idle", "attention", "listening", "concern"} and 0.12 < t < 0.20:
         blink = 0.18 + abs(t - 0.16) * 9.0
     if state == "sleepy":
         blink = 0.55 + 0.28 * math.sin(t * math.tau)
@@ -180,10 +194,20 @@ def face_for_state(state: str, t: float, width: int, height: int) -> Face:
     if state == "thinking":
         center_y -= 5 * scale
         look = math.sin(t * math.tau) * 2.0 * scale
+    if state == "deep_think":
+        center_y -= 7 * scale
+        look = math.sin(t * math.tau * 0.65) * 3.5 * scale
+    if state == "recall":
+        center_y -= 3 * scale
+        look = math.sin(t * math.tau * 0.75) * 1.5 * scale
     if state == "teasing":
         look = -8.0 * scale * ease_sine(clamp((t - 0.25) / 0.45, 0.0, 1.0))
-    if state == "uncertain":
+    if state in {"uncertain", "misheard"}:
         look = math.sin(t * math.tau) * 2.0 * scale
+    if state == "camera_curious":
+        look = math.sin(t * math.tau * 0.5) * 10.0 * scale
+    if state == "proud":
+        look = -1.5 * scale * ease_sine(t)
 
     eye_w = base_w
     eye_h = base_h * blink
@@ -199,9 +223,19 @@ def face_for_state(state: str, t: float, width: int, height: int) -> Face:
     shake_x = 0.0
     smile = None
     pupils = None
+    props: tuple[tuple[str, float, float, float, float], ...] = ()
     left_extra_h = 1.0
+    left_shape = "round_rect"
+    right_shape = "round_rect"
 
-    if state == "listening":
+    if state == "attention":
+        center_y -= 3 * scale
+        spacing *= 0.9
+        eye_w *= 1.04
+        eye_h *= 1.18
+        brightness = 1.18
+        props = (("wake", center_x, center_y - 46 * scale, 12 * scale, ease_sine(t)),)
+    elif state == "listening":
         center_x += 12 * scale
         spacing *= 0.82
         eye_w *= 0.88
@@ -221,63 +255,87 @@ def face_for_state(state: str, t: float, width: int, height: int) -> Face:
             dish_h,
             pop,
         )
+    elif state == "ack":
+        center_y -= 2 * scale
+        eye_w *= 1.04
+        eye_h *= 0.86 + 0.06 * ease_sine(t)
+        brightness = 1.14
+        tilt_l = -0.02
+        tilt_r = 0.02
+        props = (("ok_hand", center_x + spacing / 2.0 + 22 * scale, center_y + 14 * scale, 8 * scale, ease_sine(t)),)
     elif state == "speaking":
-        pulse = 0.86 + 0.18 * triangle(t * 4.0)
+        pulse = 0.92 + 0.10 * triangle(t * 4.0)
         eye_h *= pulse
+        eye_w *= 1.02
         center_y += bounce
         brightness = 1.0 + 0.10 * triangle(t * 4.0)
+        props = (
+            ("speech_wave_left", center_x - spacing / 2.0 - 30 * scale, center_y + 2 * scale, 12 * scale, triangle(t * 4.0)),
+            ("speech_wave_right", center_x + spacing / 2.0 + 30 * scale, center_y + 2 * scale, 12 * scale, triangle(t * 4.0)),
+        )
     elif state == "teasing":
         eye_h *= 0.88
-        eye_w *= 1.02
-        left_extra_h = 0.32
-        tilt_l = 0.05
-        tilt_r = -0.03
+        eye_w *= 1.08
+        left_shape = "wink"
+        left_extra_h = 0.56
+        tilt_l = 0.04
+        tilt_r = -0.05
         center_y += 2 * scale
-        smile_w = 22 * scale
-        smile = (
-            center_x - smile_w / 2,
-            center_y + 38 * scale,
-            center_x,
-            center_y + 45 * scale,
-            center_x + smile_w / 2,
-            center_y + 38 * scale,
+        brows = (
+            (center_x - spacing / 2.0 - 17 * scale, center_y - 24 * scale, center_x - spacing / 2.0 + 14 * scale, center_y - 29 * scale),
+            (center_x + spacing / 2.0 - 14 * scale, center_y - 23 * scale, center_x + spacing / 2.0 + 17 * scale, center_y - 19 * scale),
         )
-        sparkle = (center_x + spacing / 2.0 + 24 * scale, center_y - 25 * scale, 4 * scale)
+        sparkle = (center_x + spacing / 2.0 + 26 * scale, center_y - 25 * scale, 4 * scale)
     elif state == "annoyed":
-        shake_x = math.sin(t * math.tau * 4.0) * 2.0 * scale
-        eye_h *= 0.42 + 0.08 * triangle(t * 2.0)
+        shake_x = math.sin(t * math.tau * 5.0) * 2.4 * scale
+        eye_h *= 0.42 + 0.05 * triangle(t * 2.0)
         eye_w *= 1.18
         tilt_l = 0.08
         tilt_r = -0.08
-        center_y -= 4 * scale
+        center_y -= 7 * scale
         center_x += shake_x
         brows = (
-            (center_x - spacing / 2.0 - 16 * scale, center_y - 20 * scale, center_x - spacing / 2.0 + 12 * scale, center_y - 28 * scale),
-            (center_x + spacing / 2.0 - 12 * scale, center_y - 28 * scale, center_x + spacing / 2.0 + 16 * scale, center_y - 20 * scale),
+            (center_x - spacing / 2.0 - 19 * scale, center_y - 21 * scale, center_x - spacing / 2.0 + 13 * scale, center_y - 31 * scale),
+            (center_x + spacing / 2.0 - 13 * scale, center_y - 31 * scale, center_x + spacing / 2.0 + 19 * scale, center_y - 21 * scale),
         )
+        props = (("fume_tick", center_x + spacing / 2.0 + 25 * scale, center_y - 30 * scale, 8 * scale, triangle(t * 2.0)),)
     elif state == "proud":
-        center_y -= 3 * scale
-        eye_w *= 1.08
-        eye_h *= 0.82 + 0.08 * ease_sine(t)
-        brightness = 1.08 + 0.10 * ease_sine(t)
-        tilt_l = -0.04
-        tilt_r = 0.04
+        center_y -= 5 * scale
+        eye_w *= 1.04
+        eye_h *= 1.02 + 0.08 * ease_sine(t)
+        brightness = 1.10 + 0.10 * ease_sine(t)
+        left_shape = "star"
+        right_shape = "star"
         brows = (
             (center_x - spacing / 2.0 - 15 * scale, center_y - 24 * scale, center_x - spacing / 2.0 + 12 * scale, center_y - 19 * scale),
             (center_x + spacing / 2.0 - 12 * scale, center_y - 19 * scale, center_x + spacing / 2.0 + 15 * scale, center_y - 24 * scale),
         )
-        smile_w = 24 * scale
-        smile = (
-            center_x - smile_w / 2,
-            center_y + 38 * scale,
-            center_x,
-            center_y + 45 * scale,
-            center_x + smile_w / 2,
-            center_y + 38 * scale,
-        )
         sparkle = (center_x + spacing / 2.0 + 23 * scale, center_y - 20 * scale, (3 + 2 * ease_sine(t)) * scale)
+    elif state == "delight":
+        center_y -= 2 * scale
+        spacing *= 0.92
+        eye_w *= 1.05 + 0.08 * ease_sine(t)
+        eye_h *= 1.05 + 0.08 * ease_sine(t)
+        brightness = 1.20
+        left_shape = "heart"
+        right_shape = "heart"
+        sparkle = (center_x + spacing / 2.0 + 24 * scale, center_y - 24 * scale, (4 + 3 * ease_sine(t)) * scale)
+        props = (("spark_pop", center_x - spacing / 2.0 - 28 * scale, center_y - 18 * scale, 7 * scale, ease_sine(t)),)
+    elif state == "concern":
+        center_y += 2 * scale
+        eye_w *= 1.08
+        eye_h *= 0.92
+        brightness = 0.86
+        tilt_l = -0.10
+        tilt_r = 0.10
+        brows = (
+            (center_x - spacing / 2.0 - 16 * scale, center_y - 24 * scale, center_x - spacing / 2.0 + 12 * scale, center_y - 29 * scale),
+            (center_x + spacing / 2.0 - 12 * scale, center_y - 29 * scale, center_x + spacing / 2.0 + 16 * scale, center_y - 24 * scale),
+        )
     elif state == "sleepy":
-        eye_h *= 0.62
+        eye_h *= 0.46
+        left_shape = "sleep_arc"
+        right_shape = "sleep_arc"
         brightness = 0.72
         center_y += 8 * scale
         float_up = ease_sine(t) * 10 * scale
@@ -287,29 +345,100 @@ def face_for_state(state: str, t: float, width: int, height: int) -> Face:
         eye_w *= 1.05
         brightness = 0.62 + 0.18 * ease_sine(t)
         antenna = (center_x, center_y - 34 * scale, 12 * scale, 8 * scale + 5 * scale * ease_sine(t))
+        props = (("memory_ring", center_x, center_y + 16 * scale, 44 * scale, t),)
+    elif state == "recall":
+        eye_h *= 0.42
+        eye_w *= 1.04
+        brightness = 0.72 + 0.22 * ease_sine(t)
+        antenna = (center_x, center_y - 36 * scale, 9 * scale, 8 * scale + 5 * scale * ease_sine(t))
+        pupils = (
+            (center_x - spacing / 2.0 + look, center_y - eye_h * 0.18, 3.0 * scale),
+            (center_x + spacing / 2.0 + look, center_y - eye_h * 0.18, 3.0 * scale),
+        )
+        props = (("archive", center_x + 38 * scale, center_y + 35 * scale, 9 * scale, ease_sine(t)),)
     elif state == "uncertain":
         eye_w *= 0.94
         eye_h *= 0.78
         tilt_l = -0.08
         tilt_r = 0.12
         sweat = (center_x + spacing / 2 + 16 * scale, center_y - 10 * scale + triangle(t) * 5 * scale, 4 * scale)
+    elif state == "misheard":
+        center_y += 1 * scale
+        eye_w *= 0.95
+        eye_h *= 0.70
+        tilt_l = 0.08
+        tilt_r = -0.12
+        brightness = 0.95
+        receiver = (
+            center_x - spacing / 2.0 - eye_w / 2.0 - 15 * scale,
+            center_y,
+            14 * scale,
+            22 * scale,
+            0.55 + 0.45 * triangle(t),
+        )
+        sweat = (center_x + spacing / 2 + 18 * scale, center_y - 8 * scale + triangle(t) * 4 * scale, 4 * scale)
     elif state == "thinking":
         center_y -= 2 * scale
         eye_h *= 0.96
         brightness = 0.88 + 0.10 * ease_sine(t)
+        brows = (
+            (center_x - spacing / 2.0 - 14 * scale, center_y - 21 * scale, center_x - spacing / 2.0 + 15 * scale, center_y - 26 * scale),
+            (center_x + spacing / 2.0 - 14 * scale, center_y - 25 * scale, center_x + spacing / 2.0 + 15 * scale, center_y - 19 * scale),
+        )
         antenna = (center_x, center_y - 34 * scale, 9 * scale, 8 * scale + 6 * scale * triangle(t))
         pupil_y = center_y - eye_h * 0.22 - 2 * scale * ease_sine(t)
         pupils = (
             (center_x - spacing / 2.0 + look, pupil_y, 3.5 * scale),
             (center_x + spacing / 2.0 + look, pupil_y, 3.5 * scale),
         )
+        props = (("thought_bubble", center_x + spacing / 2.0 + 28 * scale, center_y - 34 * scale, 8 * scale, ease_sine(t)),)
+    elif state == "deep_think":
+        eye_h *= 0.62
+        eye_w *= 1.08
+        brightness = 0.78 + 0.08 * ease_sine(t)
+        antenna = (center_x, center_y - 38 * scale, 8 * scale, 9 * scale + 8 * scale * triangle(t))
+        pupils = (
+            (center_x - spacing / 2.0 + look, center_y - eye_h * 0.18, 2.6 * scale),
+            (center_x + spacing / 2.0 + look, center_y - eye_h * 0.18, 2.6 * scale),
+        )
+        props = (("deep_orbit", center_x, center_y - 2 * scale, 38 * scale, t),)
+    elif state == "boundary":
+        eye_h *= 0.56
+        eye_w *= 1.12
+        brightness = 0.82
+        center_y += 1 * scale
+        brows = (
+            (center_x - spacing / 2.0 - 16 * scale, center_y - 23 * scale, center_x - spacing / 2.0 + 16 * scale, center_y - 23 * scale),
+            (center_x + spacing / 2.0 - 16 * scale, center_y - 23 * scale, center_x + spacing / 2.0 + 16 * scale, center_y - 23 * scale),
+        )
+        props = (("stop_hand", center_x + spacing / 2.0 + 21 * scale, center_y + 12 * scale, 10 * scale, ease_sine(t)),)
+    elif state == "initiate":
+        center_x -= 5 * scale
+        center_y -= 2 * scale
+        spacing *= 0.9
+        eye_h *= 1.04
+        brightness = 1.08 + 0.08 * ease_sine(t)
+        props = (("wave_hand", center_x + spacing / 2.0 + 21 * scale, center_y + 17 * scale, 9 * scale, ease_sine(t)),)
+    elif state == "camera_curious":
+        center_y -= 3 * scale
+        eye_w *= 1.12
+        eye_h *= 1.02
+        brightness = 1.05
+        pupils = (
+            (center_x - spacing / 2.0 + look, center_y - eye_h * 0.10, 3.2 * scale),
+            (center_x + spacing / 2.0 + look, center_y - eye_h * 0.10, 3.2 * scale),
+        )
+        props = (("scan_frame", center_x, center_y, 56 * scale, t),)
 
-    left = Eye(center_x - spacing / 2.0 + look, center_y, eye_w, eye_h * left_extra_h, tilt_l, brightness)
+    left = Eye(center_x - spacing / 2.0 + look, center_y, eye_w, eye_h * left_extra_h, tilt_l, brightness, left_shape)
     right_extra_y = 0.0
     right_extra_h = 1.0
     if state == "uncertain":
         right_extra_y = -5 * scale
         right_extra_h = 0.72
+    if state == "misheard":
+        right_extra_y = -3 * scale
+        right_extra_h = 0.78
     right = Eye(
         center_x + spacing / 2.0 + look,
         center_y + right_extra_y,
@@ -317,14 +446,10 @@ def face_for_state(state: str, t: float, width: int, height: int) -> Face:
         eye_h * right_extra_h,
         tilt_r,
         brightness,
+        right_shape,
     )
 
     mouth = None
-    if state == "speaking":
-        open_amount = triangle(t * 4.0)
-        mouth_w = 20 * scale
-        mouth_h = (3 + 10 * open_amount) * scale
-        mouth = (center_x - mouth_w / 2, center_y + 40 * scale, center_x + mouth_w / 2, center_y + 40 * scale + mouth_h)
 
     return Face(
         left=left,
@@ -332,13 +457,14 @@ def face_for_state(state: str, t: float, width: int, height: int) -> Face:
         mouth=mouth,
         smile=smile,
         pupils=pupils,
-        particles=state in {"thinking", "memory"},
+        particles=state in {"thinking", "deep_think", "recall", "memory"},
         receiver=receiver,
         brows=brows,
         sweat=sweat,
         zzz=zzz,
         antenna=antenna,
         sparkle=sparkle,
+        props=props,
         shake_x=shake_x,
     )
 
@@ -349,7 +475,14 @@ def color_mul(rgb: tuple[int, int, int], brightness: float) -> tuple[int, int, i
 
 def rounded_rect_points(cx: float, cy: float, w: float, h: float, tilt: float) -> tuple[float, float, float, float]:
     y_shift = tilt * w
-    return (cx - w / 2, cy - h / 2 + y_shift, cx + w / 2, cy + h / 2 - y_shift)
+    y0 = cy - h / 2 + y_shift
+    y1 = cy + h / 2 - y_shift
+    if y1 < y0:
+        center = (y0 + y1) / 2.0
+        half = max(1.0, h * 0.12)
+        y0 = center - half
+        y1 = center + half
+    return (cx - w / 2, y0, cx + w / 2, y1)
 
 
 def draw_pixel_rounded_rect(
@@ -367,6 +500,103 @@ def draw_pixel_rounded_rect(
     draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=fill)
 
 
+def draw_pixel_heart(
+    draw: ImageDraw.ImageDraw,
+    eye: Eye,
+    pixel: int,
+    fill: tuple[int, int, int],
+) -> None:
+    q = lambda v: round(v / pixel) * pixel
+    scale = min(eye.w, eye.h) / 34.0
+    lobe_r = max(pixel, 8 * scale)
+    cx = eye.cx
+    cy = eye.cy - 1.5 * scale
+    left_lobe = [q(cx - 10 * scale - lobe_r), q(cy - 5 * scale - lobe_r), q(cx - 10 * scale + lobe_r), q(cy - 5 * scale + lobe_r)]
+    right_lobe = [q(cx + 10 * scale - lobe_r), q(cy - 5 * scale - lobe_r), q(cx + 10 * scale + lobe_r), q(cy - 5 * scale + lobe_r)]
+    body = [
+        (q(cx - 24 * scale), q(cy - 2 * scale)),
+        (q(cx), q(cy + 28 * scale)),
+        (q(cx + 24 * scale), q(cy - 2 * scale)),
+        (q(cx + 12 * scale), q(cy - 12 * scale)),
+        (q(cx), q(cy - 5 * scale)),
+        (q(cx - 12 * scale), q(cy - 12 * scale)),
+    ]
+    draw.polygon(body, fill=fill)
+    draw.ellipse(left_lobe, fill=fill)
+    draw.ellipse(right_lobe, fill=fill)
+
+
+def draw_pixel_star(
+    draw: ImageDraw.ImageDraw,
+    eye: Eye,
+    pixel: int,
+    fill: tuple[int, int, int],
+) -> None:
+    q = lambda v: round(v / pixel) * pixel
+    radius_outer = min(eye.w, eye.h) * 0.52
+    radius_inner = radius_outer * 0.46
+    points = []
+    for i in range(10):
+        angle = -math.pi / 2 + i * math.pi / 5
+        radius = radius_outer if i % 2 == 0 else radius_inner
+        points.append((q(eye.cx + math.cos(angle) * radius), q(eye.cy + math.sin(angle) * radius)))
+    draw.polygon(points, fill=fill)
+
+
+def draw_wink_eye(
+    draw: ImageDraw.ImageDraw,
+    eye: Eye,
+    pixel: int,
+    fill: tuple[int, int, int],
+    width: int,
+) -> None:
+    q = lambda v: round(v / pixel) * pixel
+    left = eye.cx - eye.w * 0.48
+    right = eye.cx + eye.w * 0.48
+    mid = eye.cx
+    top = eye.cy - eye.h * 0.10
+    dip = eye.cy + eye.h * 0.18
+    points = []
+    for i in range(9):
+        progress = i / 8.0
+        if progress < 0.5:
+            local = progress / 0.5
+            x = left + (mid - left) * local
+            y = top + (dip - top) * smoothstep(local)
+        else:
+            local = (progress - 0.5) / 0.5
+            x = mid + (right - mid) * local
+            y = dip + (top - dip) * smoothstep(local)
+        points.append((q(x), q(y)))
+    draw.line(points, fill=fill, width=width, joint="curve")
+    cap = max(pixel, width // 2)
+    for x, y in (points[0], points[-1]):
+        draw.rounded_rectangle([x - cap, y - cap, x + cap, y + cap], radius=cap, fill=fill)
+
+
+def draw_eye(
+    draw: ImageDraw.ImageDraw,
+    eye: Eye,
+    pixel: int,
+    fill: tuple[int, int, int],
+    radius: int,
+    width: int | None = None,
+) -> None:
+    if eye.shape == "heart":
+        draw_pixel_heart(draw, eye, pixel, fill)
+        return
+    if eye.shape == "star":
+        draw_pixel_star(draw, eye, pixel, fill)
+        return
+    if eye.shape == "wink":
+        draw_wink_eye(draw, eye, pixel, fill, width or max(pixel, int(pixel * 2.5)))
+        return
+    if eye.shape == "sleep_arc":
+        draw_wink_eye(draw, eye, pixel, fill, width or max(pixel, int(pixel * 2.2)))
+        return
+    draw_pixel_rounded_rect(draw, eye, pixel, fill, radius)
+
+
 def draw_pixel_line(
     draw: ImageDraw.ImageDraw,
     points: tuple[float, float, float, float],
@@ -377,6 +607,30 @@ def draw_pixel_line(
     x0, y0, x1, y1 = points
     q = lambda v: round(v / pixel) * pixel
     draw.line([q(x0), q(y0), q(x1), q(y1)], fill=fill, width=width or max(1, pixel))
+
+
+def draw_smile_curve(
+    draw: ImageDraw.ImageDraw,
+    smile: tuple[float, float, float, float, float, float],
+    pixel: int,
+    fill: tuple[int, int, int],
+    width: int,
+) -> None:
+    x0, y0, x1, y1, x2, y2 = smile
+    q = lambda v: round(v / pixel) * pixel
+    points = []
+    for i in range(17):
+        t = i / 16.0
+        inv = 1.0 - t
+        x = inv * inv * x0 + 2 * inv * t * x1 + t * t * x2
+        y = inv * inv * y0 + 2 * inv * t * y1 + t * t * y2
+        points.append((q(x), q(y)))
+    shadow = (8, 76, 72)
+    draw.line(points, fill=shadow, width=width + max(1, pixel), joint="curve")
+    draw.line(points, fill=fill, width=width, joint="curve")
+    cap = max(pixel, width // 2)
+    for x, y in (points[0], points[-1]):
+        draw.rounded_rectangle([x - cap, y - cap, x + cap, y + cap], radius=cap, fill=fill)
 
 
 def draw_listening_receiver(draw: ImageDraw.ImageDraw, receiver: tuple[float, float, float, float, float], pixel: int) -> None:
@@ -409,6 +663,161 @@ def draw_listening_receiver(draw: ImageDraw.ImageDraw, receiver: tuple[float, fl
             fill=wave_color,
             width=max(1, pixel // 2),
         )
+
+
+def draw_prop(draw: ImageDraw.ImageDraw, prop: tuple[str, float, float, float, float], pixel: int) -> None:
+    name, cx, cy, size, phase = prop
+    color = (92, 255, 238)
+    dim = (24, 142, 132)
+    q = lambda v: round(v / pixel) * pixel
+    w = max(1, pixel)
+
+    if name == "ok_hand":
+        cy -= math.sin(phase * math.pi) * size * 0.20
+        draw.ellipse([cx - size, cy - size, cx + size, cy + size], outline=color, width=max(w, pixel * 2))
+        draw_pixel_line(draw, (cx + size * 0.85, cy + size * 0.2, cx + size * 1.8, cy + size * 1.0), pixel, color, width=max(w, pixel * 2))
+        for i in range(3):
+            x = cx - size * 0.70 + i * size * 0.42
+            draw_pixel_line(draw, (x, cy + size * 0.9, x + size * 0.12, cy + size * 1.7), pixel, color, width=max(w, pixel))
+        return
+
+    if name == "stop_hand":
+        cy -= math.sin(phase * math.pi) * size * 0.12
+        draw.rounded_rectangle(
+            [q(cx - size * 0.72), q(cy - size), q(cx + size * 0.72), q(cy + size * 0.75)],
+            radius=max(pixel, int(size * 0.25)),
+            outline=color,
+            width=max(w, pixel * 2),
+        )
+        draw_pixel_line(draw, (cx - size * 0.90, cy + size * 1.0, cx + size * 0.88, cy + size * 1.0), pixel, dim, width=max(w, pixel))
+        return
+
+    if name == "wave_hand":
+        swing = math.sin(phase * math.pi) * size * 0.35
+        palm_x = cx + swing
+        draw.rounded_rectangle(
+            [q(palm_x - size * 0.55), q(cy - size * 0.30), q(palm_x + size * 0.55), q(cy + size * 0.75)],
+            radius=max(pixel, int(size * 0.20)),
+            fill=dim,
+            outline=color,
+            width=max(w, pixel),
+        )
+        for i in range(3):
+            x = palm_x - size * 0.45 + i * size * 0.45
+            draw_pixel_line(draw, (x, cy - size * 0.25, x + swing * 0.15, cy - size * 1.05), pixel, color, width=max(w, pixel))
+        return
+
+    if name == "wake":
+        glow = 0.35 + 0.65 * phase
+        draw.ellipse(
+            [cx - size * glow, cy - size * glow, cx + size * glow, cy + size * glow],
+            outline=color_mul(color, 0.55 + 0.45 * glow),
+            width=max(w, pixel),
+        )
+        draw_pixel_line(draw, (cx, cy - size * 1.4, cx, cy - size * 0.55), pixel, color, width=max(w, pixel))
+        return
+
+    if name == "spark_pop":
+        radius = size * (0.6 + 0.4 * phase)
+        draw_pixel_line(draw, (cx - radius, cy, cx + radius, cy), pixel, color, width=max(1, pixel // 2))
+        draw_pixel_line(draw, (cx, cy - radius, cx, cy + radius), pixel, color, width=max(1, pixel // 2))
+        return
+
+    if name == "thought_bubble":
+        bob = math.sin(phase * math.pi) * size * 0.16
+        for i, factor in enumerate((1.0, 0.62, 0.38)):
+            ox = -i * size * 0.62
+            oy = i * size * 0.58 + bob
+            r = size * factor
+            draw.ellipse(
+                [q(cx + ox - r), q(cy + oy - r), q(cx + ox + r), q(cy + oy + r)],
+                outline=color if i == 0 else dim,
+                width=max(w, pixel),
+            )
+        return
+
+    if name == "question":
+        draw.arc([cx - size, cy - size, cx + size, cy + size], start=200, end=80, fill=color, width=max(w, pixel))
+        draw.rectangle([q(cx - pixel), q(cy + size * 1.10), q(cx + pixel), q(cy + size * 1.25)], fill=color)
+        return
+
+    if name == "archive":
+        draw.rounded_rectangle(
+            [q(cx - size), q(cy - size * 0.65), q(cx + size), q(cy + size * 0.65)],
+            radius=max(pixel, int(size * 0.15)),
+            outline=color,
+            width=max(w, pixel),
+        )
+        draw_pixel_line(draw, (cx - size * 0.65, cy - size * 0.15, cx + size * 0.65, cy - size * 0.15), pixel, dim, width=max(w, pixel))
+        draw_pixel_line(draw, (cx - size * 0.35, cy + size * 0.30, cx + size * 0.35, cy + size * 0.30), pixel, color, width=max(w, pixel))
+        return
+
+    if name in {"speech_wave_left", "speech_wave_right"}:
+        side = -1 if name.endswith("left") else 1
+        for i in range(2):
+            r = size * (0.62 + i * 0.52 + 0.14 * phase)
+            box = [cx - r, cy - r * 0.88, cx + r, cy + r * 0.88]
+            start = 112 if side < 0 else -68
+            end = 248 if side < 0 else 68
+            draw.arc(
+                [q(box[0]), q(box[1]), q(box[2]), q(box[3])],
+                start=start,
+                end=end,
+                fill=color_mul(color, 0.62 + i * 0.12 + phase * 0.16),
+                width=max(1, pixel),
+            )
+        return
+
+    if name == "fume_tick":
+        rise = math.sin(phase * math.pi) * size * 0.25
+        draw.arc([cx - size, cy - size - rise, cx + size, cy + size * 0.65 - rise], start=205, end=35, fill=color, width=max(w, pixel * 2))
+        draw.arc([cx - size * 0.50, cy - size * 1.35 - rise, cx + size * 1.15, cy + size * 0.30 - rise], start=205, end=35, fill=dim, width=max(w, pixel))
+        return
+
+    if name == "soft_pulse":
+        r = size * (0.55 + 0.45 * phase)
+        draw.arc([cx - r, cy - r * 0.65, cx + r, cy + r * 0.65], start=205, end=335, fill=color_mul(color, 0.55 + 0.35 * phase), width=max(1, pixel))
+        return
+
+    if name == "memory_ring":
+        for i in range(2):
+            phase_i = (phase + i * 0.5) % 1.0
+            r = size * (0.38 + phase_i * 0.30)
+            alpha = 0.65 - phase_i * 0.38
+            draw.arc([cx - r, cy - r * 0.50, cx + r, cy + r * 0.50], start=15, end=335, fill=color_mul(color, alpha), width=max(1, pixel))
+        return
+
+    if name == "laurel_tick":
+        lift = math.sin(phase * math.pi) * size * 0.08
+        for side in (-1, 1):
+            base_x = cx + side * size * 0.95
+            for i in range(3):
+                leaf_y = cy - lift - i * size * 0.28
+                leaf_x = base_x - side * i * size * 0.20
+                draw.ellipse(
+                    [q(leaf_x - size * 0.16), q(leaf_y - size * 0.10), q(leaf_x + size * 0.16), q(leaf_y + size * 0.10)],
+                    fill=color_mul(color, 0.55 + i * 0.12),
+                )
+        return
+
+    if name == "deep_orbit":
+        for i in range(3):
+            angle = phase * math.tau + i * math.tau / 3
+            px = cx + math.cos(angle) * size * 0.62
+            py = cy + math.sin(angle) * size * 0.34
+            dot = max(2, pixel)
+            draw.rectangle([q(px), q(py), q(px) + dot, q(py) + dot], fill=color_mul(color, 0.45 + i * 0.12))
+        return
+
+    if name == "scan_frame":
+        sweep = (phase % 1.0 - 0.5) * size * 1.5
+        draw.rounded_rectangle(
+            [q(cx - size), q(cy - size * 0.52), q(cx + size), q(cy + size * 0.52)],
+            radius=max(pixel, int(size * 0.08)),
+            outline=dim,
+            width=max(1, pixel),
+        )
+        draw_pixel_line(draw, (cx + sweep, cy - size * 0.50, cx + sweep, cy + size * 0.50), pixel, color, width=max(1, pixel))
 
 
 def draw_face(width: int, height: int, state: str, t: float, pixel: int, include_bezel: bool) -> Image.Image:
@@ -453,32 +862,42 @@ def draw_face(width: int, height: int, state: str, t: float, pixel: int, include
     if face.receiver:
         draw_listening_receiver(draw, face.receiver, pixel)
 
+    for prop in face.props:
+        if prop[0] in {"scan_frame", "deep_orbit"}:
+            draw_prop(draw, prop, pixel)
+
     for eye in (face.left, face.right):
+        eye_fill = eye_color
+        if eye.shape == "wink":
+            draw_wink_eye(draw, eye, pixel, (8, 76, 72), width=max(pixel * 3, int(pixel * 3.2)))
+            draw_wink_eye(draw, eye, pixel, color_mul(eye_fill, eye.brightness), width=max(pixel * 2, int(pixel * 2.4)))
+            continue
+        eye_glows = glow_colors
         for i, glow in enumerate(glow_colors):
             grow = pixel * (4 - i)
-            glow_eye = Eye(eye.cx, eye.cy, eye.w + grow * 2, eye.h + grow * 2, eye.tilt, eye.brightness)
-            draw_pixel_rounded_rect(
+            glow_eye = Eye(eye.cx, eye.cy, eye.w + grow * 2, eye.h + grow * 2, eye.tilt, eye.brightness, eye.shape)
+            draw_eye(
                 draw,
                 glow_eye,
                 pixel,
-                color_mul(glow, eye.brightness * (0.55 + i * 0.12)),
+                color_mul(eye_glows[i], eye.brightness * (0.55 + i * 0.12)),
                 radius=max(pixel, int((8 + i * 2) * min(width, height) / 170)),
+                width=max(pixel, pixel * (4 - i)),
             )
-        draw_pixel_rounded_rect(
+        draw_eye(
             draw,
             eye,
             pixel,
-            color_mul(eye_color, eye.brightness),
+            color_mul(eye_fill, eye.brightness),
             radius=max(pixel, int(7 * min(width, height) / 170)),
+            width=max(pixel * 2, int(pixel * 2.5)),
         )
 
     if face.mouth:
         draw.rounded_rectangle(face.mouth, radius=max(1, pixel // 2), fill=(80, 248, 232))
 
     if face.smile:
-        x0, y0, x1, y1, x2, y2 = face.smile
-        q = lambda v: round(v / pixel) * pixel
-        draw.line([q(x0), q(y0), q(x1), q(y1), q(x2), q(y2)], fill=(80, 248, 232), width=max(1, pixel))
+        draw_smile_curve(draw, face.smile, pixel, (80, 248, 232), width=max(pixel * 2, int(pixel * 2.2)))
 
     if face.pupils:
         for px, py, pr in face.pupils:
@@ -490,13 +909,18 @@ def draw_face(width: int, height: int, state: str, t: float, pixel: int, include
 
     if face.brows:
         for brow in face.brows:
-            draw_pixel_line(draw, brow, pixel, (78, 244, 226), width=max(1, pixel))
+            draw_pixel_line(draw, brow, pixel, (8, 76, 72), width=max(pixel * 2, int(pixel * 2.5)))
+            draw_pixel_line(draw, brow, pixel, (78, 244, 226), width=max(pixel, pixel * 2))
 
     if face.sparkle:
         sx, sy, sr = face.sparkle
         color = (104, 255, 238)
         draw_pixel_line(draw, (sx - sr, sy, sx + sr, sy), pixel, color, width=max(1, pixel // 2))
         draw_pixel_line(draw, (sx, sy - sr, sx, sy + sr), pixel, color, width=max(1, pixel // 2))
+
+    for prop in face.props:
+        if prop[0] not in {"scan_frame", "deep_orbit"}:
+            draw_prop(draw, prop, pixel)
 
     if face.sweat:
         sx, sy, sr = face.sweat
@@ -641,15 +1065,25 @@ def save_transition_to_idle(
 def anchor_t(state: str) -> float:
     return {
         "idle": 0.0,
+        "attention": 0.20,
         "listening": 0.50,
+        "ack": 0.30,
         "thinking": 0.25,
+        "deep_think": 0.35,
+        "recall": 0.55,
         "speaking": 0.125,
         "teasing": 0.75,
         "annoyed": 0.125,
         "proud": 0.25,
+        "delight": 0.30,
+        "concern": 0.45,
         "sleepy": 0.50,
         "memory": 0.50,
         "uncertain": 0.50,
+        "boundary": 0.40,
+        "misheard": 0.45,
+        "initiate": 0.20,
+        "camera_curious": 0.35,
     }.get(state, 0.0)
 
 
@@ -661,10 +1095,18 @@ def loop_t(state: str, progress: float) -> float:
 
     if state == "idle":
         return progress
+    if state == "attention":
+        return (anchor + 0.14 * math.sin(progress * math.tau)) % 1.0
     if state == "listening":
         return (anchor + 0.04 * math.sin(progress * math.tau)) % 1.0
+    if state == "ack":
+        return (anchor + 0.16 * math.sin(progress * math.tau)) % 1.0
     if state == "thinking":
         return (anchor + 0.10 * math.sin(progress * math.tau)) % 1.0
+    if state == "deep_think":
+        return (anchor + progress * 0.8) % 1.0
+    if state == "recall":
+        return (anchor + 0.16 * math.sin(progress * math.tau)) % 1.0
     if state == "speaking":
         return (anchor + progress) % 1.0
     if state == "teasing":
@@ -673,12 +1115,24 @@ def loop_t(state: str, progress: float) -> float:
         return (anchor + progress) % 1.0
     if state == "proud":
         return (anchor + 0.08 * math.sin(progress * math.tau)) % 1.0
+    if state == "delight":
+        return (anchor + 0.10 * math.sin(progress * math.tau)) % 1.0
+    if state == "concern":
+        return (anchor + 0.07 * math.sin(progress * math.tau)) % 1.0
     if state == "sleepy":
         return (anchor + 0.10 * math.sin(progress * math.tau)) % 1.0
     if state == "memory":
         return (anchor + 0.12 * math.sin(progress * math.tau)) % 1.0
     if state == "uncertain":
         return (anchor + 0.10 * math.sin(progress * math.tau)) % 1.0
+    if state == "boundary":
+        return (anchor + 0.05 * math.sin(progress * math.tau)) % 1.0
+    if state == "misheard":
+        return (anchor + 0.12 * math.sin(progress * math.tau)) % 1.0
+    if state == "initiate":
+        return (anchor + 0.18 * math.sin(progress * math.tau)) % 1.0
+    if state == "camera_curious":
+        return progress
     return anchor
 
 

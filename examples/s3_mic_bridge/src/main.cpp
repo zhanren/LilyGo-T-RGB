@@ -11,10 +11,14 @@
 #endif
 
 #define I2S_MIC_PORT I2S_NUM_0
+#define I2S_SPEAKER_PORT I2S_NUM_1
 
 static int32_t samples[MIC_READ_SAMPLES];
+static int16_t speaker_samples[512];
 static unsigned long last_notify_ms = 0;
+static unsigned long last_voice_beep_ms = 0;
 static bool wifi_started = false;
+static bool speaker_ready = false;
 
 String urlEncode(const String &value)
 {
@@ -153,6 +157,112 @@ bool installI2SMic()
     return true;
 }
 
+bool installI2SSpeaker()
+{
+#if SPEAKER_ENABLED
+    const i2s_config_t i2s_config = {
+        .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
+        .sample_rate = SPEAKER_SAMPLE_RATE,
+        .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+        .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+        .dma_buf_count = 8,
+        .dma_buf_len = 256,
+        .use_apll = false,
+        .tx_desc_auto_clear = true,
+        .fixed_mclk = 0,
+        .mclk_multiple = I2S_MCLK_MULTIPLE_256,
+        .bits_per_chan = I2S_BITS_PER_CHAN_16BIT
+    };
+
+    const i2s_pin_config_t pin_config = {
+        .mck_io_num = I2S_PIN_NO_CHANGE,
+        .bck_io_num = SPEAKER_I2S_BCLK_PIN,
+        .ws_io_num = SPEAKER_I2S_LRC_PIN,
+        .data_out_num = SPEAKER_I2S_DIN_PIN,
+        .data_in_num = I2S_PIN_NO_CHANGE
+    };
+
+    esp_err_t err = i2s_driver_install(I2S_SPEAKER_PORT, &i2s_config, 0, NULL);
+    if (err != ESP_OK) {
+        Serial.printf("Speaker I2S install failed: %d\n", err);
+        return false;
+    }
+
+    err = i2s_set_pin(I2S_SPEAKER_PORT, &pin_config);
+    if (err != ESP_OK) {
+        Serial.printf("Speaker I2S pin config failed: %d\n", err);
+        return false;
+    }
+
+    i2s_zero_dma_buffer(I2S_SPEAKER_PORT);
+    speaker_ready = true;
+    return true;
+#else
+    speaker_ready = false;
+    return true;
+#endif
+}
+
+void playTone(float frequency_hz, uint32_t duration_ms, float volume)
+{
+    if (!speaker_ready) {
+        return;
+    }
+
+    volume = constrain(volume, 0.0f, 1.0f);
+    const uint32_t total_frames = (SPEAKER_SAMPLE_RATE * duration_ms) / 1000;
+    uint32_t frames_written = 0;
+    float phase = 0.0f;
+    const float phase_step = (float)(TWO_PI * frequency_hz / SPEAKER_SAMPLE_RATE);
+
+    while (frames_written < total_frames) {
+        const size_t available_frames = sizeof(speaker_samples) / (sizeof(speaker_samples[0]) * 2);
+        const size_t frame_count = min((uint32_t)available_frames, total_frames - frames_written);
+
+        for (size_t i = 0; i < frame_count; i++) {
+            const float fade_in = frames_written < 80 ? frames_written / 80.0f : 1.0f;
+            const uint32_t frames_left = total_frames - frames_written;
+            const float fade_out = frames_left < 80 ? frames_left / 80.0f : 1.0f;
+            const float envelope = min(fade_in, fade_out);
+            const int16_t sample = (int16_t)(sinf(phase) * 18000.0f * volume * envelope);
+
+            speaker_samples[i * 2] = sample;
+            speaker_samples[i * 2 + 1] = sample;
+
+            phase += phase_step;
+            if (phase >= TWO_PI) {
+                phase -= TWO_PI;
+            }
+            frames_written++;
+        }
+
+        size_t bytes_written = 0;
+        i2s_write(I2S_SPEAKER_PORT, speaker_samples, frame_count * 2 * sizeof(int16_t), &bytes_written, portMAX_DELAY);
+    }
+}
+
+void playHeardBeep()
+{
+    playTone(880.0f, 70, 0.22f);
+    delay(35);
+    playTone(1174.0f, 90, 0.20f);
+}
+
+void handleSerialCommands()
+{
+    while (Serial.available()) {
+        char command = (char)Serial.read();
+        if (command == 'b' || command == 'B') {
+            Serial.println("Speaker test beep");
+            playHeardBeep();
+        } else if (command == '?' || command == 'h' || command == 'H') {
+            Serial.println("Commands: b=beep, h=help");
+        }
+    }
+}
+
 double readMicDbfs()
 {
     size_t bytes_read = 0;
@@ -195,16 +305,31 @@ void setup()
         }
     }
 
+    if (installI2SSpeaker()) {
+        Serial.printf("Speaker pins: BCLK=%d LRC=%d DIN=%d\n", SPEAKER_I2S_BCLK_PIN, SPEAKER_I2S_LRC_PIN, SPEAKER_I2S_DIN_PIN);
+    } else {
+        Serial.println("Speaker setup failed. Mic test will still run.");
+    }
+
     connectWifiIfConfigured();
     Serial.println("Mic setup OK. Speak near the mic and watch the level.");
+    Serial.println("Type 'b' in Serial Monitor to test speaker output.");
 }
 
 void loop()
 {
+    handleSerialCommands();
+
     const double dbfs = readMicDbfs();
     Serial.printf("%7.1f dBFS %s\n", dbfs, levelBar(dbfs).c_str());
 
     if (dbfs >= VOICE_TRIGGER_DBFS) {
         notifyTRgbListening(dbfs);
+#if SPEAKER_BEEP_ON_VOICE
+        if (speaker_ready && millis() - last_voice_beep_ms >= VOICE_NOTIFY_COOLDOWN_MS) {
+            last_voice_beep_ms = millis();
+            playHeardBeep();
+        }
+#endif
     }
 }

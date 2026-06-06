@@ -11,9 +11,32 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 DATA_DIR = ROOT / "examples" / "lv_single_image" / "data"
 GIF_DIR = DATA_DIR / "gif_loops"
-GIF_128_DIR = GIF_DIR / "128"
+GIF_480_DIR = GIF_DIR / "480"
+SOURCE_DIR = DATA_DIR / "eye_assets_perf_fast" / "480x480"
 MAX_GIF_BYTES = 1024 * 1024
-TARGET_SIZE = (128, 128)
+TARGET_SIZE = (480, 480)
+EXPECTED_STATES = {
+    "idle",
+    "attention",
+    "listening",
+    "ack",
+    "thinking",
+    "deep_think",
+    "recall",
+    "speaking",
+    "teasing",
+    "annoyed",
+    "proud",
+    "delight",
+    "concern",
+    "sleepy",
+    "memory",
+    "uncertain",
+    "boundary",
+    "misheard",
+    "initiate",
+    "camera_curious",
+}
 
 
 def png_size(path: Path) -> tuple[int, int]:
@@ -70,35 +93,44 @@ def image_size(path: Path) -> tuple[int, int]:
 def main() -> int:
     errors: list[str] = []
 
-    for path in sorted(DATA_DIR.glob("*")):
-        if path.is_dir():
-            continue
-        suffix = path.suffix.lower()
-        if suffix == ".mp4":
-            errors.append(f"remove MP4 source from board data folder: {path}")
-        elif suffix in (".png", ".jpg", ".jpeg"):
-            size = image_size(path)
+    if not SOURCE_DIR.exists():
+        errors.append(f"missing generated source asset folder: {SOURCE_DIR}")
+    else:
+        png_states = {path.stem for path in SOURCE_DIR.glob("*.png") if path.name != "contact_sheet.png"}
+        gif_states = {path.name.removesuffix("_loop.gif") for path in SOURCE_DIR.glob("*_loop.gif")}
+        missing_pngs = EXPECTED_STATES - png_states
+        missing_gifs = EXPECTED_STATES - gif_states
+        if missing_pngs:
+            errors.append(f"missing source PNG states: {', '.join(sorted(missing_pngs))}")
+        if missing_gifs:
+            errors.append(f"missing source GIF states: {', '.join(sorted(missing_gifs))}")
+
+        for image in sorted(SOURCE_DIR.glob("*")):
+            if image.name == "contact_sheet.png" or image.name == ".DS_Store":
+                continue
+            if image.suffix.lower() not in (".png", ".gif"):
+                errors.append(f"unexpected generated asset: {image}")
+                continue
+            size = image_size(image)
             if size != TARGET_SIZE:
-                errors.append(f"still must be 128x128: {path} is {size[0]}x{size[1]}")
-        elif suffix == ".gif":
-            errors.append(f"move GIF loops into gif_loops/128: {path}")
-        elif path.name != ".DS_Store":
-            errors.append(f"unexpected file in data folder: {path}")
+                errors.append(f"asset must be 480x480: {image} is {size[0]}x{size[1]}")
+            if image.suffix.lower() == ".gif":
+                byte_count = image.stat().st_size
+                if byte_count >= MAX_GIF_BYTES:
+                    errors.append(f"GIF must be under 1 MB: {image} is {byte_count} bytes")
 
     if GIF_DIR.exists():
         for child in sorted(GIF_DIR.iterdir()):
-            if child.is_dir() and child.name != "128":
+            if child.is_dir() and child.name != "480":
                 errors.append(f"remove non-target GIF folder: {child}")
             elif child.is_file():
-                errors.append(f"move GIF loop into gif_loops/128: {child}")
+                errors.append(f"move GIF loop into gif_loops/480: {child}")
 
-    if not GIF_128_DIR.exists():
-        errors.append(f"missing GIF target folder: {GIF_128_DIR}")
-    else:
-        for gif in sorted(GIF_128_DIR.glob("*.gif")):
+    if GIF_480_DIR.exists():
+        for gif in sorted(GIF_480_DIR.glob("*.gif")):
             size = image_size(gif)
             if size != TARGET_SIZE:
-                errors.append(f"GIF must be 128x128: {gif} is {size[0]}x{size[1]}")
+                errors.append(f"GIF must be 480x480: {gif} is {size[0]}x{size[1]}")
             byte_count = gif.stat().st_size
             if byte_count >= MAX_GIF_BYTES:
                 errors.append(f"GIF must be under 1 MB: {gif} is {byte_count} bytes")
@@ -108,7 +140,7 @@ def main() -> int:
             print(f"ERROR: {error}", file=sys.stderr)
         return 1
 
-    print("T-RGB assets look ready: 128x128 stills, 128x128 GIF loops, no oversized board data.")
+    print("T-RGB assets look ready: 480x480 source PNGs and fast GIF loops are present and under 1 MB.")
     return 0
 
 
